@@ -21,7 +21,6 @@ import {
   Check,
   ChevronDown,
 } from "lucide-react"
-import { ethers } from "ethers"
 import { usePrivy, useWallets } from "@privy-io/react-auth"
 import { IExecDataProtector } from "@iexec/dataprotector"
 import InteractiveSphere from "./components/InteractiveSphere"
@@ -37,17 +36,6 @@ const IEXEC_EXPLORER_SLUG = (import.meta.env.VITE_IEXEC_EXPLORER_SLUG || 'bellec
 // ============================================================================
 const mockAlgos = []
 
-// Optional market contract to receive ETH payments. If not provided, we'll fallback
-// to paying the seller directly (algo.owner) after a user confirmation.
-const MARKET_ADDRESS = ""
-const ARBITRUM_SEPOLIA = {
-  chainIdHex: "0x66EEE",
-  chainId: 421614,
-  chainName: "Arbitrum Sepolia",
-  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"],
-  blockExplorerUrls: ["https://sepolia.arbiscan.io"],
-}
 const DEFAULT_AUTHORIZED_APP = "0xC1E9feA9Bb7B9B74695963D51B7F6f127fC7c850"
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 const DEFAULT_GRANT_PRICE_NRLC = 0
@@ -374,13 +362,6 @@ export default function StrategyMarketplace() {
   const [runResultFilename, setRunResultFilename] = useState("result.txt")
   const [runStepsCount, setRunStepsCount] = useState(1)
   const [runSteps, setRunSteps] = useState([""])
-  const [hasPaidForRun, setHasPaidForRun] = useState(false)
-
-  const [account, setAccount] = useState(null);
-  const [provider, setProvider] = useState(null);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [stepsCount, setStepsCount] = useState(1);
-  const [steps, setSteps] = useState([""]);
 
   const resetGrantState = (statusMessage = "") => {
     setGrantResult(null)
@@ -410,84 +391,6 @@ export default function StrategyMarketplace() {
 
   const grantInProgress = isGrantWorkflowRunning || isGrantingAccess
 
-  async function handlePayRLC(algo) {
-    try {
-      if (!account) {
-        await handleConnectWallet();
-        if (!account && !window.ethereum) return false;
-      }
-      if (!window.ethereum) {
-        alert("No wallet available.");
-        return false;
-      }
-      const browserProvider = provider ?? new ethers.BrowserProvider(window.ethereum);
-      const signer = await browserProvider.getSigner();
-      // Resolve recipient: prefer configured market address; otherwise fallback to seller address
-      let recipient = MARKET_ADDRESS;
-      if (!recipient) {
-        const seller = String(algo?.owner || '').trim();
-        const isAddr = /^0x[a-fA-F0-9]{40}$/.test(seller);
-        if (!isAddr) {
-          alert("No market configured and seller address is invalid. Set VITE_MARKET_ADDRESS in .env.");
-          return false;
-        }
-        const ok = confirm(`No market contract configured. Send ${algo.priceEth} RLC directly to the seller?\n\nSeller: ${seller}`);
-        if (!ok) return false;
-        recipient = seller;
-      }
-      const tx = await signer.sendTransaction({ to: recipient, value: ethers.parseEther(String(algo.priceEth)) });
-      await tx.wait();
-      return true;
-    } catch (e) {
-      console.error(e);
-      alert("Payment failed.");
-      return false;
-    }
-  }
-
-  async function handleConnectWallet() {
-    try {
-      if (!window.ethereum) {
-        alert("No wallet found. Please install MetaMask or a compatible wallet.");
-        return;
-      }
-      setIsConnecting(true);
-      const accs = await window.ethereum.request({ method: "eth_requestAccounts" });
-      const browserProvider = new ethers.BrowserProvider(window.ethereum);
-      const net = await browserProvider.getNetwork();
-      if (Number(net.chainId) !== ARBITRUM_SEPOLIA.chainId) {
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: ARBITRUM_SEPOLIA.chainIdHex }],
-          });
-        } catch (err) {
-          if (err && err.code === 4902) {
-            await window.ethereum.request({
-              method: "wallet_addEthereumChain",
-              params: [{
-                chainId: ARBITRUM_SEPOLIA.chainIdHex,
-                chainName: ARBITRUM_SEPOLIA.chainName,
-                nativeCurrency: ARBITRUM_SEPOLIA.nativeCurrency,
-                rpcUrls: ARBITRUM_SEPOLIA.rpcUrls,
-                blockExplorerUrls: ARBITRUM_SEPOLIA.blockExplorerUrls,
-              }],
-            });
-          } else {
-            throw err;
-          }
-        }
-      }
-      setProvider(browserProvider);
-      setAccount(accs[0]);
-    } catch (e) {
-      console.error(e);
-      alert("Wallet connection failed.");
-    } finally {
-      setIsConnecting(false);
-    }
-  }
-
   function handleRunSignal(algo) {
     setRunAlgo(algo)
     setRunAppAddress(algo?.authorizedApp || "")
@@ -506,7 +409,6 @@ export default function StrategyMarketplace() {
       setRunResultUrl("")
     }
     setRunResultFilename("result.txt")
-    setHasPaidForRun(false)
     setRunOpen(true)
   }
 
@@ -515,12 +417,6 @@ export default function StrategyMarketplace() {
     if (!dataProtectorCore) { alert("Please connect your wallet (Privy) first."); return }
     if (!runAlgo?.protectedAddress) { setRunError("This strategy does not include a protected data address."); return }
     if (!runAppAddress) { setRunError("Please provide the iApp address to run."); return }
-    // Ensure payment is done once per run to avoid rate limiting
-    if (!hasPaidForRun) {
-      const ok = await handlePayRLC(runAlgo)
-      if (!ok) return
-      setHasPaidForRun(true)
-    }
     setRunError("")
     setRunStatus("Requesting wallet signature…")
     try {
@@ -1177,6 +1073,9 @@ export default function StrategyMarketplace() {
                       ))}
                     </div>
                     <p className="form-steps-note">These steps describe your comparison sequence. The iApp can compare them with the seller's protected steps to compute a similarity score.</p>
+                    <p className="form-steps-note">
+                      Make sure your wallet has deposited enough eRLC into your iExec account—the marketplace will escrow the run price automatically when you launch the task.
+                    </p>
                   </div>
                   {/* If steps are empty, the run uses empty args automatically */}
                   <div className="form-actions">
