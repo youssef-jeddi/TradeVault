@@ -48,6 +48,13 @@ const ARBITRUM_SEPOLIA = {
   rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"],
   blockExplorerUrls: ["https://sepolia.arbiscan.io"],
 }
+const DEFAULT_AUTHORIZED_APP = "0xC1E9feA9Bb7B9B74695963D51B7F6f127fC7c850"
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+const DEFAULT_GRANT_PRICE_NRLC = 0
+const DEFAULT_GRANT_VOLUME = 1
+const MAX_AUTO_GRANT_ATTEMPTS = 3
+const AUTO_GRANT_RETRY_DELAY_MS = 4000
+const NRLC_PER_RLC = 1_000_000_000
 
 // ============================================================================
 // UTILITY FUNCTIONS
@@ -63,6 +70,25 @@ function normalizeChainId(chainId) {
 function shortenAddress(address) {
   if (!address) return ""
   return `${address.slice(0, 4)}...${address.slice(-4)}`
+}
+
+function normalizeRlcInput(value, defaultValue = 0) {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num < 0) return defaultValue
+  return num
+}
+
+function rlcToNrlc(value) {
+  const rlc = normalizeRlcInput(value)
+  return Math.round(rlc * NRLC_PER_RLC)
+}
+
+function formatRlcFromNrlc(nrlcValue) {
+  const nrlc = Number(nrlcValue || 0)
+  if (!Number.isFinite(nrlc) || nrlc === 0) return "0"
+  const rlc = nrlc / NRLC_PER_RLC
+  const formatted = rlc.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 6 })
+  return formatted
 }
 
 // ============================================================================
@@ -323,14 +349,13 @@ export default function StrategyMarketplace() {
   const [sortBy, setSortBy] = useState("reviews")
   const [lastProtectedAddress, setLastProtectedAddress] = useState(null)
   // Grant access state
-  const [grantAuthorizedApp, setGrantAuthorizedApp] = useState("")
-  const [grantAuthorizedUser, setGrantAuthorizedUser] = useState("0x0000000000000000000000000000000000000000")
-  const [grantPricePerAccess, setGrantPricePerAccess] = useState(0)
-  const [grantNumberOfAccess, setGrantNumberOfAccess] = useState(1)
   const [isGrantingAccess, setIsGrantingAccess] = useState(false)
   const [grantResult, setGrantResult] = useState(null)
   const [grantStatus, setGrantStatus] = useState("")
   const [grantError, setGrantError] = useState("")
+  const [isGrantWorkflowRunning, setIsGrantWorkflowRunning] = useState(false)
+  const [grantPlannedPriceNRlc, setGrantPlannedPriceNRlc] = useState(DEFAULT_GRANT_PRICE_NRLC)
+  const [grantPlannedVolume, setGrantPlannedVolume] = useState(DEFAULT_GRANT_VOLUME)
   const [numSteps, setNumSteps] = useState(1)
 
   // Buyer run modal state
@@ -357,10 +382,19 @@ export default function StrategyMarketplace() {
   const [stepsCount, setStepsCount] = useState(1);
   const [steps, setSteps] = useState([""]);
 
+  const resetGrantState = (statusMessage = "") => {
+    setGrantResult(null)
+    setGrantError("")
+    setGrantStatus(statusMessage)
+  }
 
   function openSell() {
     setLastProtectedAddress(null)
     setNumSteps(1)
+    setIsGrantWorkflowRunning(false)
+    resetGrantState("")
+    setGrantPlannedPriceNRlc(DEFAULT_GRANT_PRICE_NRLC)
+    setGrantPlannedVolume(DEFAULT_GRANT_VOLUME)
     setSellOpen(true)
   }
 
@@ -373,6 +407,8 @@ export default function StrategyMarketplace() {
     if (sortBy === "price-high") list = [...list].sort((a, b) => b.priceEth - a.priceEth)
     return list
   }, [q, algos, assetFilter, sortBy])
+
+  const grantInProgress = isGrantWorkflowRunning || isGrantingAccess
 
   async function handlePayRLC(algo) {
     try {
@@ -648,10 +684,13 @@ export default function StrategyMarketplace() {
         }
       }
 
+      const priceRlc = normalizeRlcInput(form.priceEth ?? 0.02, 0.02)
+      const priceNRlc = rlcToNrlc(priceRlc)
+
       const privatePayload = {
         title: String(form.title || ""),
         asset: String(form.asset || ""),
-        priceEth: Number(form.priceEth || 0.02),
+        priceEth: priceRlc,
         createdAt: new Date().toISOString(),
         owner: wallet?.address || "",
         steps: steps,
@@ -671,20 +710,32 @@ export default function StrategyMarketplace() {
         data: dataEntries,
       })
 
+      const protectedAddress = result.address
       const newAlgo = {
         id: `a${Date.now()}`,
         title: String(form.title),
         asset: String(form.asset),
         owner: String(result?.owner || wallet?.address || "you"),
-        priceEth: Number(form.priceEth || 0.02),
+        priceEth: priceRlc,
         reviews: 0,
-        protectedAddress: result.address,
+        protectedAddress,
         winRate: Math.round(Math.random() * 30 + 50),
         image: "/strategy-meeting.png",
       }
 
       setAlgos((prev) => [newAlgo, ...prev])
-      setLastProtectedAddress(result.address)
+      setLastProtectedAddress(protectedAddress)
+      setGrantPlannedPriceNRlc(priceNRlc)
+      setGrantPlannedVolume(DEFAULT_GRANT_VOLUME)
+      resetGrantState("Auto grant scheduled…")
+      startGrantWorkflow({
+        protectedData: protectedAddress,
+        prefix: "Auto grant",
+        maxAttempts: MAX_AUTO_GRANT_ATTEMPTS,
+        delayMs: AUTO_GRANT_RETRY_DELAY_MS,
+        pricePerAccess: priceNRlc,
+        numberOfAccess: DEFAULT_GRANT_VOLUME,
+      })
     } catch (err) {
       console.error("Protect strategy failed:", err)
       alert("Failed to protect strategy. Please try again.")
@@ -693,45 +744,126 @@ export default function StrategyMarketplace() {
     }
   }
 
-  async function handleGrantAccess(e) {
-    if (e && e.preventDefault) e.preventDefault();
+  async function executeGrantAccess({
+    protectedData,
+    authorizedApp,
+    authorizedUser = ZERO_ADDRESS,
+    pricePerAccess = DEFAULT_GRANT_PRICE_NRLC,
+    numberOfAccess = DEFAULT_GRANT_VOLUME,
+    statusPrefix = "",
+  }) {
     if (!dataProtectorCore) {
-      alert("Wallet/provider not ready. Connect with Privy first.");
-      return;
+      throw new Error("Wallet/provider not ready. Connect with Privy first.")
     }
-    if (!lastProtectedAddress) {
-      alert("Protect your strategy first to get its address.");
-      return;
+    const protectedDataAddress = String(protectedData || "").trim()
+    if (!protectedDataAddress) {
+      throw new Error("No protected data address provided.")
     }
+    const appAddress = String(authorizedApp || "").trim()
+    if (!appAddress) {
+      throw new Error("No authorized app address provided.")
+    }
+    const userAddress = String(authorizedUser || ZERO_ADDRESS).trim() || ZERO_ADDRESS
+    const prefix = statusPrefix ? `${statusPrefix} ` : ""
+    setIsGrantingAccess(true)
+    setGrantError("")
+    setGrantStatus(`${prefix}Requesting wallet signature…`)
     try {
-      setIsGrantingAccess(true);
-      setGrantError("");
-      setGrantStatus("Requesting wallet signature…");
-      const price = Math.max(0, Math.trunc(Number(grantPricePerAccess) || 0));
-      const volume = Math.max(1, Math.trunc(Number(grantNumberOfAccess) || 1));
+      const price = Math.max(0, Math.trunc(Number(pricePerAccess) || 0))
+      const volume = Math.max(1, Math.trunc(Number(numberOfAccess) || 1))
       const res = await dataProtectorCore.grantAccess({
-        protectedData: lastProtectedAddress,
-        authorizedApp: grantAuthorizedApp,
-        authorizedUser: grantAuthorizedUser || "0x0000000000000000000000000000000000000000",
+        protectedData: protectedDataAddress,
+        authorizedApp: appAddress,
+        authorizedUser: userAddress,
         pricePerAccess: price,
         numberOfAccess: volume,
         onStatusUpdate: ({ title, isDone }) => {
-          setGrantStatus(`${title}${isDone ? ' ✓' : ''}`);
-          console.log(`Grant Access Status: ${title}, Done: ${isDone}`);
+          setGrantStatus(`${prefix}${title}${isDone ? ' ✓' : ''}`)
+          console.log(`Grant Access Status: ${title}, Done: ${isDone}`)
         },
-      });
-      setGrantResult(res);
-      // attach authorized app to the listed strategy (if present)
-      setAlgos((prev) => prev.map((a) => (
-        a.protectedAddress === lastProtectedAddress ? { ...a, authorizedApp: grantAuthorizedApp } : a
-      )));
-      setGrantStatus("Access granted ✓");
+      })
+      setGrantResult(res)
+      const datasetPriceNumeric = Number(res?.datasetprice)
+      setGrantPlannedPriceNRlc(Number.isFinite(datasetPriceNumeric) ? datasetPriceNumeric : price)
+      const datasetVolumeNumeric = Number(res?.volume)
+      setGrantPlannedVolume(Number.isFinite(datasetVolumeNumeric) && datasetVolumeNumeric > 0 ? datasetVolumeNumeric : volume)
+      setAlgos((prev) =>
+        prev.map((a) =>
+          (a.protectedAddress || a.id) === protectedDataAddress ? { ...a, authorizedApp: appAddress } : a
+        )
+      )
+      setGrantStatus(`${prefix}Access granted ✓`)
+      return res
     } catch (err) {
-      console.error("Grant access failed:", err);
-      setGrantError(err?.message || "Failed to grant access. Check inputs and try again.");
+      setGrantError(err?.message || "Failed to grant access. Check inputs and try again.")
+      throw err
     } finally {
-      setIsGrantingAccess(false);
+      setIsGrantingAccess(false)
     }
+  }
+
+  // Auto grant workflow: retry a few times in case the dataset is not immediately ready on-chain.
+  async function startGrantWorkflow({
+    protectedData,
+    prefix = "Auto grant",
+    maxAttempts = 1,
+    delayMs = AUTO_GRANT_RETRY_DELAY_MS,
+    pricePerAccess = DEFAULT_GRANT_PRICE_NRLC,
+    numberOfAccess = DEFAULT_GRANT_VOLUME,
+  }) {
+    if (!protectedData) return false
+    if (isGrantWorkflowRunning) return false
+    setIsGrantWorkflowRunning(true)
+    try {
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const attemptLabel = maxAttempts > 1 ? ` (attempt ${attempt + 1}/${maxAttempts})` : ""
+        const statusPrefix = `${prefix}${attemptLabel}`
+        try {
+          await executeGrantAccess({
+            protectedData,
+            authorizedApp: DEFAULT_AUTHORIZED_APP,
+            authorizedUser: ZERO_ADDRESS,
+            pricePerAccess,
+            numberOfAccess,
+            statusPrefix,
+          })
+          return true
+        } catch (err) {
+          console.error(`${prefix} attempt ${attempt + 1} failed:`, err)
+          if (attempt + 1 >= maxAttempts) {
+            setGrantStatus(`${prefix} failed after ${maxAttempts} attempts.`)
+            return false
+          }
+          setGrantStatus(`${prefix} attempt ${attempt + 1} failed. Retrying…`)
+          await new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs)))
+        }
+      }
+      return false
+    } finally {
+      setIsGrantWorkflowRunning(false)
+    }
+  }
+
+  async function handleGrantAccess(e) {
+    if (e && e.preventDefault) e.preventDefault()
+    if (!dataProtectorCore) {
+      alert("Wallet/provider not ready. Connect with Privy first.")
+      return
+    }
+    if (!lastProtectedAddress) {
+      alert("Protect your strategy first to get its address.")
+      return
+    }
+    if (isGrantWorkflowRunning || isGrantingAccess) return
+    resetGrantState("Manual grant scheduled…")
+    startGrantWorkflow({
+      protectedData: lastProtectedAddress,
+      prefix: "Manual grant",
+      maxAttempts: MAX_AUTO_GRANT_ATTEMPTS,
+      delayMs: AUTO_GRANT_RETRY_DELAY_MS,
+      pricePerAccess: grantPlannedPriceNRlc,
+      numberOfAccess: grantPlannedVolume,
+    })
   }
 
   return (
@@ -1182,43 +1314,58 @@ export default function StrategyMarketplace() {
 
                 {lastProtectedAddress && (
                   <div className="mt-6 rounded-2xl border border-zinc-200 p-4 bg-white">
-                    <h4 className="form-label" style={{ fontSize: 15, fontWeight: 700 }}>Grant access (optional)</h4>
-                    <p className="text-sm text-zinc-600" style={{ marginTop: 6 }}>Authorize an iApp and set price and volume so buyers can run your strategy.</p>
-                    <div className="mt-3 space-y-3">
+                    <h4 className="form-label" style={{ fontSize: 15, fontWeight: 700 }}>Access permissions</h4>
+                    <p className="text-sm text-zinc-600" style={{ marginTop: 6 }}>
+                      Granting happens automatically so your trusted iApp can consume the protected data without extra steps.
+                    </p>
+                    <div className="mt-3 space-y-3 text-sm text-zinc-600">
                       <div>
-                        <label className="form-label">Authorized iApp address</label>
-                        <input value={grantAuthorizedApp} onChange={(e) => setGrantAuthorizedApp(e.target.value)} required maxLength={42} placeholder="0x... app address" className="form-input" />
-                      </div>
-                      <div className="form-grid-2">
-                        <div>
-                          <label className="form-label">Authorized user (optional)</label>
-                          <input value={grantAuthorizedUser} onChange={(e) => setGrantAuthorizedUser(e.target.value)} maxLength={42} placeholder="0x0000... for any user" className="form-input" />
-                        </div>
-                        <div>
-                          <label className="form-label">Number of accesses</label>
-                          <input type="number" min={1} value={grantNumberOfAccess} onChange={(e) => setGrantNumberOfAccess(parseInt(e.target.value) || 1)} className="form-input" />
-                        </div>
+                        <span className="font-semibold text-zinc-800">Protected data</span>{" "}
+                        <AddressDisplay address={lastProtectedAddress} />
                       </div>
                       <div>
-                        <label className="form-label">Price per access (nRLC)</label>
-                        <input type="number" min={0} value={grantPricePerAccess} onChange={(e) => setGrantPricePerAccess(parseFloat(e.target.value) || 0)} className="form-input" placeholder="100000000 = 0.1 RLC" />
+                        <span className="font-semibold text-zinc-800">Authorized iApp</span>{" "}
+                        <AddressDisplay address={DEFAULT_AUTHORIZED_APP} />
                       </div>
-                      <div className="flex items-center justify-between gap-3 pt-1">
-                        <div className="text-xs text-zinc-500">{grantStatus}</div>
-                        <button type="button" onClick={handleGrantAccess} disabled={isGrantingAccess || !grantAuthorizedApp} className="gradient-button" style={{ padding: '8px 14px' }}>{isGrantingAccess ? 'Granting…' : 'Grant access'}</button>
+                      <div>
+                        <span className="font-semibold text-zinc-800">Price / Volume</span>{" "}
+                        {formatRlcFromNrlc(grantPlannedPriceNRlc)} RLC ({grantPlannedPriceNRlc} nRLC) • {grantPlannedVolume}{" "}
+                        {grantPlannedVolume === 1 ? "access" : "accesses"}
                       </div>
+                      <div className="font-semibold text-zinc-800">
+                        Status:{" "}
+                        <span className="font-normal text-zinc-600">
+                          {grantStatus ||
+                            (grantInProgress
+                              ? "Grant in progress…"
+                              : grantResult
+                                ? "Grant completed ✓"
+                                : "Waiting to start…")}
+                        </span>
+                      </div>
+                      {grantResult && (
+                        <div className="mt-2 p-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-900 space-y-1">
+                          <div><strong>Granted!</strong></div>
+                          <div>Protected Data: <span className="font-mono break-all">{grantResult.dataset}</span></div>
+                          <div>Price: {grantResult.datasetprice} nRLC • Volume: {grantResult.volume}</div>
+                          <div>iApp restrict: {String(grantResult.apprestrict)}</div>
+                        </div>
+                      )}
+                      {grantError && !grantInProgress && (
+                        <div className="mt-2 p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-900">{grantError}</div>
+                      )}
+                      {grantError && !grantInProgress && (
+                        <button
+                          type="button"
+                          onClick={handleGrantAccess}
+                          className="gradient-button"
+                          style={{ padding: "8px 14px", width: "fit-content" }}
+                          disabled={grantInProgress}
+                        >
+                          Retry grant
+                        </button>
+                      )}
                     </div>
-                    {grantResult && (
-                      <div className="mt-3 p-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-900 text-sm space-y-1">
-                        <div><strong>Granted!</strong></div>
-                        <div>Protected Data: <span className="font-mono break-all">{grantResult.dataset}</span></div>
-                        <div>Price: {grantResult.datasetprice} nRLC • Volume: {grantResult.volume}</div>
-                        <div>iApp restrict: {String(grantResult.apprestrict)}</div>
-                      </div>
-                    )}
-                    {grantError && (
-                      <div className="mt-3 p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-900 text-sm">{grantError}</div>
-                    )}
                   </div>
                 )}
               </form>
