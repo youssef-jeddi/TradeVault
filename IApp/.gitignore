@@ -1,0 +1,9 @@
+# iapp config file may contain secrets
+iapp.config.json
+
+# iapp test directories
+input
+output
+
+# python virtual env
+.venv
