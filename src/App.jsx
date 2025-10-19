@@ -26,6 +26,7 @@ import AlgoCard from "./components/AlgoCard"
 import RunModal from "./components/RunModal"
 import SellModal from "./components/SellModal"
 import "./App.css"
+import logo from "./assets/logo.png"
 
 // Feature flag: control auto-loading on-chain Protected Data listings
 const AUTO_LOAD_PD = import.meta.env.VITE_AUTO_LOAD_PD === 'true'
@@ -670,8 +671,8 @@ export default function StrategyMarketplace() {
       <header className="header">
         <div className="header-content">
           <div className="header-logo">
-            <ShieldCheck size={24} style={{ color: "#7c3aed" }} />
-            <span className="gradient-text">Strategy Market</span>
+            <img src={logo} alt="Logo" style={{ height: 80, width: "auto", marginRight: 8 }} />
+            <span className="gradient-text" style={{ fontSize: "40px" }}>TradeVault</span>
           </div>
           <div className="header-actions">
             <button className="gradient-button" onClick={openSell}>
@@ -691,11 +692,10 @@ export default function StrategyMarketplace() {
         <div className="hero-grid">
           <div>
             <h1 className="hero-title">
-              Private trading signals for <span className="gradient-text">BTC</span> and{" "}
-              <span className="gradient-text">ETH</span>
+              Discover <span className="gradient-text">TradeVault</span>
             </h1>
             <p className="hero-description">
-              Pay per use in ETH, run inside iExec TEEs, receive a clean allocation signal. Strategies and inputs remain
+              Pay per use in RLC, run inside iExec TEEs, receive a clean allocation signal. Strategies remain
               private.
             </p>
             <div className="hero-features">
@@ -705,7 +705,7 @@ export default function StrategyMarketplace() {
               </div>
               <div className="hero-feature">
                 <Coins size={16} />
-                ETH payments
+                RLC payments
               </div>
               <div className="hero-feature">
                 <Sparkles size={16} />
@@ -717,7 +717,7 @@ export default function StrategyMarketplace() {
                 List your strategy
               </button>
               <button className="glass-button" onClick={handleOpenDocs}>
-                iExec Quickstart
+                iExec Docs
                 <ExternalLink size={16} />
               </button>
             </div>
@@ -728,16 +728,16 @@ export default function StrategyMarketplace() {
               <div className="hero-card-label">
                 <Lock size={16} /> TEE enclave
               </div>
-              <div className="hero-card-title">Execute privately, pay in ETH</div>
+              <div className="hero-card-title">Execute privately, pay in RLC</div>
               <p className="hero-card-description">
                 Monetize strategies without revealing code or data. On-chain receipts, auditable events, confidential
                 compute with iExec.
               </p>
               <div className="hero-card-grid">
-                {["ETH payments", "Access control", "Attestation"].map((k) => (
+                {["RLC payments", "Access control", "Attestation"].map((k) => (
                   <div key={k} className="hero-card-item">
                     <div className="hero-card-item-title">{k}</div>
-                    <div className="hero-card-item-subtitle">Ready to wire</div>
+                    <div className="hero-card-item-subtitle"></div>
                   </div>
                 ))}
               </div>
