@@ -374,7 +374,7 @@ export default function StrategyMarketplace() {
     return list
   }, [q, algos, assetFilter, sortBy])
 
-  async function handlePayEth(algo) {
+  async function handlePayRLC(algo) {
     try {
       if (!account) {
         await handleConnectWallet();
@@ -395,7 +395,7 @@ export default function StrategyMarketplace() {
           alert("No market configured and seller address is invalid. Set VITE_MARKET_ADDRESS in .env.");
           return false;
         }
-        const ok = confirm(`No market contract configured. Send ${algo.priceEth} ETH directly to the seller?\n\nSeller: ${seller}`);
+        const ok = confirm(`No market contract configured. Send ${algo.priceEth} RLC directly to the seller?\n\nSeller: ${seller}`);
         if (!ok) return false;
         recipient = seller;
       }
@@ -481,7 +481,7 @@ export default function StrategyMarketplace() {
     if (!runAppAddress) { setRunError("Please provide the iApp address to run."); return }
     // Ensure payment is done once per run to avoid rate limiting
     if (!hasPaidForRun) {
-      const ok = await handlePayEth(runAlgo)
+      const ok = await handlePayRLC(runAlgo)
       if (!ok) return
       setHasPaidForRun(true)
     }
