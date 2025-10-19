@@ -19,7 +19,6 @@ import {
 } from "lucide-react"
 import { usePrivy, useWallets } from "@privy-io/react-auth"
 import { IExecDataProtector } from "@iexec/dataprotector"
-import InteractiveSphere from "./components/InteractiveSphere"
 import AddressDisplay from "./components/AddressDisplay"
 import Stars from "./components/Stars"
 import AlgoCard from "./components/AlgoCard"
@@ -38,7 +37,7 @@ const IEXEC_EXPLORER_SLUG = (import.meta.env.VITE_IEXEC_EXPLORER_SLUG || 'bellec
 // ============================================================================
 const mockAlgos = []
 
-const DEFAULT_AUTHORIZED_APP = "0xC1E9feA9Bb7B9B74695963D51B7F6f127fC7c850"
+const DEFAULT_AUTHORIZED_APP = "0xB54482AEE1343eF69eb1ade87085aE164E920986"
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 const DEFAULT_GRANT_PRICE_NRLC = 0
 const DEFAULT_GRANT_VOLUME = 1
@@ -213,6 +212,7 @@ export default function StrategyMarketplace() {
   const [runResultFilename, setRunResultFilename] = useState("result.txt")
   const [runStepsCount, setRunStepsCount] = useState(1)
   const [runSteps, setRunSteps] = useState([""])
+  const [runResultSummary, setRunResultSummary] = useState(null)
 
   const clearRunResultUrl = () => {
     setRunResultUrl((prev) => {
@@ -301,6 +301,7 @@ export default function StrategyMarketplace() {
     setRunTaskId("")
     setRunDealId("")
     setRunResultPreview("")
+    setRunResultSummary(null)
     setRunStepsCount(1)
     setRunSteps([""])
     setRunResultPath("")
@@ -316,6 +317,7 @@ export default function StrategyMarketplace() {
     if (!runAppAddress) { setRunError("Please provide the iApp address to run."); return }
     setRunError("")
     setRunStatus("Requesting wallet signature…")
+    setRunResultSummary(null)
     try {
       const stepsClean = (runSteps || []).map((s) => String(s || '').trim()).filter(Boolean)
       const args = stepsClean.length ? JSON.stringify({ steps: stepsClean }) : ""
@@ -383,9 +385,62 @@ export default function StrategyMarketplace() {
             let preview = text.slice(0, 2000)
             try {
               const parsed = JSON.parse(text)
-              if (parsed && typeof parsed === 'object' && 'fiability-score' in parsed) {
-                const score = parsed['fiability-score']
-                preview = `Fiability score: ${score}`
+              if (parsed && typeof parsed === 'object') {
+                if ('fiability-score' in parsed) {
+                  const score = parsed['fiability-score']
+                  preview = `Fiability score: ${score}`
+                }
+                const explanations = Array.isArray(parsed?.explanations) ? parsed.explanations : []
+                const fallbackBuyLine = explanations.find((line) => typeof line === 'string' && /\[fallback\s+BUY]/i.test(line))
+                const fallbackSellLine = explanations.find((line) => typeof line === 'string' && /\[fallback\s+SELL]/i.test(line))
+                const recommendation = parsed?.recommendation || {}
+                const buyPercentValue =
+                  typeof recommendation.buy_percent === 'number'
+                    ? recommendation.buy_percent
+                    : typeof recommendation.percent === 'number'
+                      ? recommendation.percent
+                      : fallbackBuyLine
+                        ? Number.parseFloat((fallbackBuyLine.match(/([0-9]+(?:\.[0-9]+)?)%/i) || [])[1])
+                        : undefined
+                const sellPercentValue =
+                  typeof recommendation.sell_percent === 'number'
+                    ? recommendation.sell_percent
+                    : fallbackSellLine
+                      ? Number.parseFloat((fallbackSellLine.match(/([0-9]+(?:\.[0-9]+)?)%/i) || [])[1])
+                      : undefined
+                const hasBuyPercent =
+                  typeof buyPercentValue === 'number' && !Number.isNaN(buyPercentValue)
+                const hasSellPercent =
+                  typeof sellPercentValue === 'number' && !Number.isNaN(sellPercentValue)
+                if (hasBuyPercent || hasSellPercent) {
+                  const fmt = (value) => {
+                    if (value == null || Number.isNaN(value)) return null
+                    const num = Number(value)
+                    if (!Number.isFinite(num)) return null
+                    const fixed = Number.isInteger(num) ? num.toString() : num.toFixed(2)
+                    return fixed.replace(/\.?0+$/, '')
+                  }
+                  const buyPct = hasBuyPercent ? fmt(buyPercentValue) : null
+                  const sellPct = hasSellPercent ? fmt(sellPercentValue) : null
+                  const advicePieces = []
+                  if (buyPct) advicePieces.push(`${buyPct}% of your capital to long`)
+                  if (sellPct) advicePieces.push(`${sellPct}% to short`)
+                  const advice =
+                    advicePieces.length > 0
+                      ? `Use ${advicePieces.join(' and ')}.`
+                      : ''
+                  if (advice) {
+                    setRunResultSummary(advice)
+                  }
+                  const fallbackText = [fallbackBuyLine, fallbackSellLine].filter(Boolean).join('\n')
+                  if (fallbackText) {
+                    preview = fallbackText
+                  } else if (advice) {
+                    preview = advice
+                  } else {
+                    preview = ''
+                  }
+                }
               }
             } catch { /* non-JSON content keeps original preview */ }
             setRunResultPreview(preview)
@@ -723,7 +778,6 @@ export default function StrategyMarketplace() {
             </div>
           </div>
           <div className="hero-card-wrapper" style={{ position: "relative" }}>
-            <InteractiveSphere />
             <div className="hero-card" style={{ position: "relative", zIndex: 2 }}>
               <div className="hero-card-label">
                 <Lock size={16} /> TEE enclave
@@ -925,6 +979,7 @@ export default function StrategyMarketplace() {
               runResultUrl={runResultUrl}
               runResultFilename={runResultFilename}
               explorerSlug={IEXEC_EXPLORER_SLUG}
+              runResultSummary={runResultSummary}
             />
           </motion.div>
         )}
