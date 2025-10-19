@@ -52,24 +52,6 @@ def load_steps_array() -> List[str]:
     Preferred: a single protected string key 'steps' containing all steps (JSON array or multi-line text).
     Fallback: sequential keys 'step1','step2',... each containing one rule string.
     """
-    # Try main key first
-    try:
-        raw = protected_data.getValue("steps", "string")
-        try:
-            arr = json.loads(raw)
-            if isinstance(arr, list) and all(isinstance(s, str) for s in arr):
-                return arr
-        except Exception:
-            pass
-        # fallback for multi-line string
-        lines = [line.strip() for line in raw.splitlines() if line.strip()]
-        if lines:
-            return lines
-        raise ValueError("Empty 'steps' entry.")
-    except Exception:
-        pass  # fallback to step1, step2, ...
-
-    # fallback: step1, step2, ...
     collected = []
     idx = 1
     while True:
@@ -237,11 +219,20 @@ def evaluate_rules_now(
     max_position_percent: float,
 ) -> Dict[str, Any]:
     """
-    Evaluate rules in order; the first satisfied rule determines the action.
-    Action percent is clamped to [0, max_position_percent].
-    Returns action/percent/matched_rule/indicator_value/explanations.
+    Evaluate all rules and derive BUY/SELL percentages.
+    The first satisfied BUY and SELL rules (respectively) provide the targets.
+    If no rule supplies a target, fall back to the default split.
     """
+    DEFAULT_BUY_PERCENT = float(os.getenv("DEFAULT_BUY_PERCENT", "80"))
+    DEFAULT_SELL_PERCENT = float(os.getenv("DEFAULT_SELL_PERCENT", "20"))
+
     explanations: List[str] = []
+    buy_percent: Optional[float] = None
+    sell_percent: Optional[float] = None
+    buy_rule: Optional[str] = None
+    sell_rule: Optional[str] = None
+    buy_indicator: Optional[float] = None
+    sell_indicator: Optional[float] = None
 
     for r in parsed_rules:
         name = f"{r['action']} if pct_change {r['window_hours']}h"
@@ -254,31 +245,57 @@ def evaluate_rules_now(
         # Build boolean based on threshold/range (we already normalized to gte/lte).
         ok_gte = (r["gte"] is None) or (val >= float(r["gte"]))
         ok_lte = (r["lte"] is None) or (val <= float(r["lte"]))
+        passed = ok_gte and ok_lte
 
         explanations.append(
             f"[{name}] => {val:.4f}% vs "
             f"gte={r['gte'] if r['gte'] is not None else '-'}, "
             f"lte={r['lte'] if r['lte'] is not None else '-'} "
-            f"→ pass={ok_gte and ok_lte}"
+            f"→ pass={passed}"
         )
 
-        if ok_gte and ok_lte:
-            atype = r["action"]
-            percent = max(0.0, min(float(r["percent"]), float(max_position_percent)))
-            return {
-                "action": atype,
-                "percent": percent,
-                "matched_rule": name,
-                "indicator_value": val,
-                "explanations": explanations,
-            }
+        if not passed:
+            continue
 
-    explanations.append("No rule matched → default HOLD 0%.")
+        percent = max(0.0, min(float(r["percent"]), float(max_position_percent)))
+        if r["action"] == "BUY" and buy_percent is None:
+            buy_percent = percent
+            buy_rule = name
+            buy_indicator = val
+        elif r["action"] == "SELL" and sell_percent is None:
+            sell_percent = percent
+            sell_rule = name
+            sell_indicator = val
+        # HOLD rules are logged but never drive the final recommendation
+
+        if buy_percent is not None and sell_percent is not None:
+            break
+
+    if buy_percent is None:
+        buy_percent = min(DEFAULT_BUY_PERCENT, float(max_position_percent))
+        buy_rule = buy_rule or "fallback_default_buy"
+        explanations.append(
+            f"[fallback BUY] Using default BUY {buy_percent:.2f}% "
+            f"(MAX cap {max_position_percent}%)."
+        )
+    if sell_percent is None:
+        sell_percent = min(DEFAULT_SELL_PERCENT, float(max_position_percent))
+        sell_rule = sell_rule or "fallback_default_sell"
+        explanations.append(
+            f"[fallback SELL] Using default SELL {sell_percent:.2f}% "
+            f"(MAX cap {max_position_percent}%)."
+        )
+
+    primary_action = "BUY" if buy_percent >= sell_percent else "SELL"
+    primary_percent = buy_percent if primary_action == "BUY" else sell_percent
+
     return {
-        "action": "HOLD",
-        "percent": 0.0,
-        "matched_rule": None,
-        "indicator_value": None,
+        "action": primary_action,
+        "percent": primary_percent,
+        "buy_percent": buy_percent,
+        "sell_percent": sell_percent,
+        "matched_rules": {"buy": buy_rule, "sell": sell_rule},
+        "indicator_values": {"buy": buy_indicator, "sell": sell_indicator},
         "explanations": explanations,
     }
 
@@ -309,7 +326,7 @@ def main() -> int:
       1) Read 'steps' (JSON array of rule strings) from protected data.
       2) Parse each rule string into a normalized rule dict.
       3) Fetch BTC hourly prices for the last 24h.
-      4) Evaluate rules (first match wins) to produce an immediate signal.
+      4) Evaluate rules to derive BUY/SELL allocations (fallback defaults if needed).
       5) Write iExec-compliant outputs (result.json + computed.json).
     """
     t0 = time.time()
@@ -340,11 +357,16 @@ def main() -> int:
             "lookback_hours": min(len(prices), 24),
             "latest_price": prices[-1][1],
             "recommendation": {
-                "action": decision["action"],   # BUY / SELL / HOLD
-                "percent": decision["percent"]  # clamped by MAX_POSITION_PERCENT
+                "action": decision["action"],   # BUY or SELL (highest weight)
+                "percent": decision["percent"],  # clamped by MAX_POSITION_PERCENT
+                "buy_percent": decision["buy_percent"],
+                "sell_percent": decision["sell_percent"],
             },
-            "matched_rule": decision["matched_rule"],
-            "indicator_value_pct": decision["indicator_value"],
+            "matched_rule": decision["matched_rules"],
+            "indicator_value_pct": decision["indicator_values"].get(
+                decision["action"].lower()
+            ),
+            "indicator_values_pct": decision["indicator_values"],
             "explanations": decision["explanations"],
             "audit": {
                 "rule_count": len(parsed_rules),

@@ -19,6 +19,7 @@ export default function RunModal({
   runResultUrl,
   runResultFilename,
   explorerSlug,
+  runResultSummary,
 }) {
   if (!algo) return null
 
@@ -124,7 +125,27 @@ export default function RunModal({
               )}
             </div>
           )}
-          {runResultUrl && (
+          {runResultSummary && (
+            <div
+              className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-900"
+              style={{ padding: "14px 16px", fontSize: 14, lineHeight: 1.6 }}
+            >
+              <strong style={{ display: "block", fontSize: 15, marginBottom: 6 }}>Suggested allocation</strong>
+              <span>{runResultSummary}</span>
+              {runResultPreview && runResultPreview !== runResultSummary && (
+                <div style={{ marginTop: 10, fontSize: 12, color: "#047857" }}>
+                  Source notes:
+                  <br />
+                  {runResultPreview.split("\n").map((line, idx) => (
+                    <span key={idx} style={{ display: "block" }}>
+                      {line}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {runResultUrl && !runResultSummary && (
             <div className="form-group">
               <label className="form-label">Result preview</label>
               <pre
@@ -150,6 +171,16 @@ export default function RunModal({
                 Download {runResultFilename}
               </a>
             </div>
+          )}
+          {runResultUrl && runResultSummary && (
+            <a
+              href={runResultUrl}
+              download={runResultFilename}
+              className="gradient-button"
+              style={{ display: "inline-flex", marginTop: 16, textDecoration: "none" }}
+            >
+              Download raw result
+            </a>
           )}
         </form>
       )}
