@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; background:#ffffff; color:#0a0a0a; }
+
+/* Minimal utility classes used by IExec Starter components */
+button.primary,
+a.primary {
+  border-radius: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 0.3s ease-out, box-shadow 0.3s ease-out;
+  height: 2.75rem;
+  min-width: 6rem;
+  padding: 0.75rem 1.5rem;
+  color: #fff;
+  background-color: #183ee9;
+}
+
+button.primary:hover,
+a.primary:hover { background-color: rgba(24,62,233,0.8); }
+
+button.secondary,
+a.secondary {
+  border-radius: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 0.3s ease-out, box-shadow 0.3s ease-out;
+  height: 2.75rem;
+  min-width: 6rem;
+  padding: 0.75rem 1.5rem;
+  color: #fff;
+  background-color: #111827;
+}
+
+button.secondary:hover,
+a.secondary:hover { background-color: #1f2937; }
+
+select,
+.chain-selector {
+  border: 1px solid #1f2937;
+  padding: 0.25rem 2rem 0.25rem 0.75rem;
+  min-height: 2.25rem;
+  border-radius: 0.375rem;
+  background: #ffffff;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 0.5rem center;
+  background-repeat: no-repeat;
+  background-size: 1.25rem 1.25rem;
+}
+
