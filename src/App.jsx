@@ -7,23 +7,24 @@ import {
   ShieldCheck,
   Lock,
   KeyRound,
-  Star,
   Search,
   Sparkles,
   X,
   Plus,
   Coins,
-  ArrowRight,
   ExternalLink,
   Filter,
   SortAsc,
-  Copy,
-  Check,
   ChevronDown,
 } from "lucide-react"
 import { usePrivy, useWallets } from "@privy-io/react-auth"
 import { IExecDataProtector } from "@iexec/dataprotector"
 import InteractiveSphere from "./components/InteractiveSphere"
+import AddressDisplay from "./components/AddressDisplay"
+import Stars from "./components/Stars"
+import AlgoCard from "./components/AlgoCard"
+import RunModal from "./components/RunModal"
+import SellModal from "./components/SellModal"
 import "./App.css"
 
 // Feature flag: control auto-loading on-chain Protected Data listings
@@ -55,11 +56,6 @@ function normalizeChainId(chainId) {
   return Number(chainId)
 }
 
-function shortenAddress(address) {
-  if (!address) return ""
-  return `${address.slice(0, 4)}...${address.slice(-4)}`
-}
-
 function normalizeRlcInput(value, defaultValue = 0) {
   const num = Number(value)
   if (!Number.isFinite(num) || num < 0) return defaultValue
@@ -77,150 +73,6 @@ function formatRlcFromNrlc(nrlcValue) {
   const rlc = nrlc / NRLC_PER_RLC
   const formatted = rlc.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 6 })
   return formatted
-}
-
-// ============================================================================
-// COMPONENTS
-// ============================================================================
-
-// Removed ReliabilityBadge and AccuracyBadge components
-
-function Stars({ n = 4, isEmpty = false }) {
-  return (
-    <span style={{ display: "inline-flex", gap: "2px" }}>
-      {Array.from({ length: 5 }).map((_, i) => (
-        <Star
-          key={i}
-          size={16}
-          style={{
-            fill: isEmpty ? "transparent" : i < n ? "#fbbf24" : "transparent",
-            stroke: isEmpty ? "#cbd5e1" : i < n ? "#fbbf24" : "#cbd5e1",
-            strokeWidth: 2,
-          }}
-        />
-      ))}
-    </span>
-  )
-}
-
-function AddressDisplay({ address }) {
-  const [expanded, setExpanded] = useState(false)
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = (e) => {
-    e.stopPropagation()
-    e.preventDefault()
-    const value = String(address || '')
-    navigator.clipboard.writeText(value)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  const handleToggle = (e) => {
-    e.stopPropagation()
-    setExpanded(!expanded)
-  }
-
-  const addrStr = String(address || '')
-  return (
-    <div className="address-display" onClick={handleToggle}>
-      {expanded ? addrStr : shortenAddress(addrStr)}
-      <button className="address-copy-button" onClick={handleCopy} title={copied ? "Copied!" : "Copy address"}>
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-      </button>
-    </div>
-  )
-}
-
-function AlgoCard({ algo, onSelect, onPay, onDelist, canDelist }) {
-  const [isHovered, setIsHovered] = useState(false)
-
-  return (
-    <motion.div
-      whileHover={{ scale: 1.02, y: -4 }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onClick={onSelect}
-      className="strategy-card"
-    >
-      <div className="strategy-card-header">
-        <div className="strategy-card-title-section">
-          <div className="strategy-card-title-row">
-            <span className="badge-asset">{algo.asset}</span>
-            <h3 className="strategy-card-title">{algo.title}</h3>
-          </div>
-        </div>
-        {isHovered && (
-          <button
-            className="strategy-card-arrow"
-            onClick={(e) => {
-              e.stopPropagation()
-              onSelect()
-            }}
-            title="View details"
-          >
-            <ArrowRight size={18} />
-          </button>
-        )}
-      </div>
-
-      <div style={{ marginTop: "16px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
-        <span
-          style={{
-            padding: "6px 12px",
-            borderRadius: "6px",
-            background: "#dbeafe",
-            border: "2px solid #000000",
-            fontSize: "12px",
-            fontWeight: "700",
-            color: "#1a1a1a",
-          }}
-        >
-          {algo.reviews} reviews
-        </span>
-      </div>
-
-      <div className="strategy-card-metrics">
-        {algo.reviews === 0 ? (
-          <>
-            <Stars n={0} isEmpty={true} />
-            <span style={{ color: "#64748b", fontWeight: "600" }}>Not reviewed yet</span>
-          </>
-        ) : (
-          <>
-            <Stars n={Math.max(1, Math.round((algo.winRate || 70) / 20))} />
-            <span style={{ color: "#64748b" }}>({algo.reviews})</span>
-          </>
-        )}
-      </div>
-
-      <div className="strategy-card-footer">
-        <div className="strategy-card-owner">
-          By <AddressDisplay address={algo.owner} />
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {canDelist && (
-            <button
-              className="glass-button"
-              style={{ padding: '6px 10px' }}
-              onClick={(e) => { e.stopPropagation(); onDelist?.(algo); }}
-            >
-              Delist
-            </button>
-          )}
-          <button
-            className="strategy-card-price-button"
-            onClick={(e) => {
-              e.stopPropagation()
-              onPay()
-            }}
-          >
-            Pay
-          </button>
-        </div>
-      </div>
-    </motion.div>
-  )
 }
 
 // ============================================================================
@@ -350,8 +202,6 @@ export default function StrategyMarketplace() {
   const [runOpen, setRunOpen] = useState(false)
   const [runAlgo, setRunAlgo] = useState(null)
   const [runAppAddress, setRunAppAddress] = useState("")
-  const [runDpKey, setRunDpKey] = useState("file-key")
-  const [runSchema, setRunSchema] = useState("file")
   const [runStatus, setRunStatus] = useState("")
   const [runError, setRunError] = useState("")
   const [runTaskId, setRunTaskId] = useState("")
@@ -362,6 +212,53 @@ export default function StrategyMarketplace() {
   const [runResultFilename, setRunResultFilename] = useState("result.txt")
   const [runStepsCount, setRunStepsCount] = useState(1)
   const [runSteps, setRunSteps] = useState([""])
+
+  const clearRunResultUrl = () => {
+    setRunResultUrl((prev) => {
+      if (prev) {
+        try { URL.revokeObjectURL(prev) } catch { }
+      }
+      return ""
+    })
+  }
+
+  const handleRunAppAddressChange = (value) => setRunAppAddress(value)
+
+  const handleRunStepsCountChange = (value) => {
+    const n = Math.max(1, Math.min(10, Number(value) || 1))
+    setRunStepsCount(n)
+    setRunSteps((prev) => {
+      const next = [...(prev || [])]
+      if (n > next.length) {
+        while (next.length < n) next.push("")
+      } else if (n < next.length) {
+        next.length = n
+      }
+      return next
+    })
+  }
+
+  const handleRunStepChange = (index, value) => {
+    setRunSteps((prev) => {
+      const next = [...(prev || [])]
+      next[index] = value
+      return next
+    })
+  }
+
+  const handleCloseRunModal = () => {
+    clearRunResultUrl()
+    setRunOpen(false)
+  }
+
+  const handleSellModalClose = () => {
+    setSellOpen(false)
+  }
+
+  const handleSellStepsChange = (value) => {
+    const n = Math.max(1, Math.min(10, Number(value) || 1))
+    setNumSteps(n)
+  }
 
   const resetGrantState = (statusMessage = "") => {
     setGrantResult(null)
@@ -390,12 +287,14 @@ export default function StrategyMarketplace() {
   }, [q, algos, assetFilter, sortBy])
 
   const grantInProgress = isGrantWorkflowRunning || isGrantingAccess
+  const grantPriceRlcDisplay = useMemo(
+    () => formatRlcFromNrlc(grantPlannedPriceNRlc),
+    [grantPlannedPriceNRlc]
+  )
 
   function handleRunSignal(algo) {
     setRunAlgo(algo)
     setRunAppAddress(algo?.authorizedApp || "")
-    setRunDpKey("file-key")
-    setRunSchema("file")
     setRunStatus("")
     setRunError("")
     setRunTaskId("")
@@ -404,10 +303,7 @@ export default function StrategyMarketplace() {
     setRunStepsCount(1)
     setRunSteps([""])
     setRunResultPath("")
-    if (runResultUrl) {
-      try { URL.revokeObjectURL(runResultUrl) } catch { }
-      setRunResultUrl("")
-    }
+    clearRunResultUrl()
     setRunResultFilename("result.txt")
     setRunOpen(true)
   }
@@ -895,7 +791,7 @@ export default function StrategyMarketplace() {
               <AlgoCard
                 algo={algo}
                 onSelect={() => setSelected(algo)}
-                onPay={() => handleRunSignal(algo)}
+                onRun={() => handleRunSignal(algo)}
                 onDelist={handleDelist}
                 canDelist={String(algo.owner || '').toLowerCase() === currentAddress}
               />
@@ -982,7 +878,7 @@ export default function StrategyMarketplace() {
                   onClick={() => handleRunSignal(selected)}
                   style={{ width: "100%", padding: "14px 20px", fontSize: "16px" }}
                 >
-                  Pay
+                  Run iApp
                 </button>
               </div>
 
@@ -1009,111 +905,27 @@ export default function StrategyMarketplace() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => { if (runResultUrl) { try { URL.revokeObjectURL(runResultUrl) } catch { } } setRunOpen(false); setRunResultUrl("") }}
+            onClick={handleCloseRunModal}
           >
-            <motion.div
-              className="modal-sell"
-              initial={{ scale: 0.96, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.96, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="modal-header">
-                <h3 className="modal-title">Run iApp for “{runAlgo.title}”</h3>
-                <button className="modal-close-button" onClick={() => { if (runResultUrl) { try { URL.revokeObjectURL(runResultUrl) } catch { } } setRunOpen(false); setRunResultUrl("") }}>
-                  <X size={20} style={{ color: "#94a3b8" }} />
-                </button>
-              </div>
-
-              {!runAlgo.protectedAddress ? (
-                <div className="success-message" style={{ background: '#fef3c7', borderColor: '#f59e0b', color: '#92400e' }}>
-                  This listing has no protected data address. Ask the seller to protect and grant access.
-                </div>
-              ) : (
-                <form onSubmit={handleRunIapp} className="modal-form">
-                  <div className="form-group">
-                    <label className="form-label">iApp address</label>
-                    <input value={runAppAddress} onChange={(e) => setRunAppAddress(e.target.value)} placeholder="0x... app address granted to read this PD" className="form-input" maxLength={42} required />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Number of Steps</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={runStepsCount}
-                      onChange={(e) => {
-                        const n = Math.max(1, Math.min(10, Number(e.target.value)))
-                        setRunStepsCount(n)
-                        setRunSteps((prev) => {
-                          const next = [...(prev || [])]
-                          if (n > next.length) { while (next.length < n) next.push("") }
-                          else if (n < next.length) { next.length = n }
-                          return next
-                        })
-                      }}
-                      className="form-input"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Your Steps</label>
-                    <div className="form-steps">
-                      {Array.from({ length: runStepsCount }).map((_, i) => (
-                        <div key={i}>
-                          <input
-                            value={runSteps[i] || ''}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              setRunSteps((prev) => { const nx = [...(prev || [])]; nx[i] = v; return nx })
-                            }}
-                            placeholder={`Step ${i + 1}`}
-                            className="form-input"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    <p className="form-steps-note">These steps describe your comparison sequence. The iApp can compare them with the seller's protected steps to compute a similarity score.</p>
-                    <p className="form-steps-note">
-                      Make sure your wallet has deposited enough eRLC into your iExec account—the marketplace will escrow the run price automatically when you launch the task.
-                    </p>
-                  </div>
-                  {/* If steps are empty, the run uses empty args automatically */}
-                  <div className="form-actions">
-                    <div className="text-xs text-zinc-500">{runStatus}</div>
-                    <button type="submit" className="gradient-button">Run iApp</button>
-                  </div>
-
-                  {runError && (
-                    <div className="success-message" style={{ background: '#fee2e2', borderColor: '#ef4444', color: '#991b1b' }}>{runError}</div>
-                  )}
-                  {(runTaskId || runDealId) && (
-                    <div className="text-xs text-zinc-500" style={{ marginTop: 8 }}>
-                      {runDealId && (<div>Deal: {runDealId}</div>)}
-                      {runTaskId && (
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                          <span>Task: {runTaskId}</span>
-                          <a
-                            href={`https://explorer.iex.ec/${IEXEC_EXPLORER_SLUG}/task/${runTaskId}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="underline"
-                          >
-                            Open in iExec Explorer
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {runResultUrl && (
-                    <div className="form-group">
-                      <label className="form-label">Result preview</label>
-                      <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e5e7eb', maxHeight: 240, overflow: 'auto' }}>{runResultPreview || '(binary content)'}</pre>
-                      <a href={runResultUrl} download={runResultFilename} className="gradient-button" style={{ display: 'inline-flex', marginTop: 8, textDecoration: 'none' }}>Download {runResultFilename}</a>
-                    </div>
-                  )}
-                </form>
-              )}
-            </motion.div>
+            <RunModal
+              algo={runAlgo}
+              onClose={handleCloseRunModal}
+              onSubmit={handleRunIapp}
+              runAppAddress={runAppAddress}
+              onRunAppAddressChange={handleRunAppAddressChange}
+              runStepsCount={runStepsCount}
+              onRunStepsCountChange={handleRunStepsCountChange}
+              runSteps={runSteps}
+              onRunStepChange={handleRunStepChange}
+              runStatus={runStatus}
+              runError={runError}
+              runTaskId={runTaskId}
+              runDealId={runDealId}
+              runResultPreview={runResultPreview}
+              runResultUrl={runResultUrl}
+              runResultFilename={runResultFilename}
+              explorerSlug={IEXEC_EXPLORER_SLUG}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -1126,149 +938,25 @@ export default function StrategyMarketplace() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setSellOpen(false)}
+            onClick={handleSellModalClose}
           >
-            <motion.div
-              className="modal-sell"
-              initial={{ scale: 0.96, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.96, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="modal-header">
-                <h3 className="modal-title">List your strategy</h3>
-                <button className="modal-close-button" onClick={() => setSellOpen(false)}>
-                  <X size={20} style={{ color: "#94a3b8" }} />
-                </button>
-              </div>
-              <p className="modal-description">Describe your strategy. Encryption is handled by iExec DataProtector.</p>
-              <form className="modal-form" onSubmit={handleSubmitAlgo}>
-                <div className="form-group">
-                  <label className="form-label">Title</label>
-                  <input name="title" required placeholder="e.g., BTC Momentum V3" className="form-input" />
-                </div>
-                <div className="form-grid-2">
-                  <div className="form-group">
-                    <label className="form-label">Asset</label>
-                    <select name="asset" className="form-select">
-                      <option value="BTC">BTC</option>
-                      <option value="ETH">ETH</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Price (RLC)</label>
-                    <input name="priceEth" type="number" step="0.001" defaultValue={0.02} className="form-input" />
-                  </div>
-                </div>
-
-                <div className="form-steps-grid">
-                  <div className="form-group">
-                    <label className="form-label">Number of Steps</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={numSteps}
-                      onChange={(e) => setNumSteps(Math.max(1, Math.min(10, Number(e.target.value))))}
-                      className="form-input"
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Strategy Steps (confidential - will be encrypted)</label>
-                    <div className="form-steps">
-                      {Array.from({ length: numSteps }).map((_, i) => (
-                        <div key={i}>
-                          <input name={`step_${i + 1}`} placeholder={`Step ${i + 1}`} className="form-input" />
-                        </div>
-                      ))}
-                    </div>
-                    <p className="form-steps-note">
-                      These steps will be encrypted and sent to the backend. They won't be displayed in the marketplace.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="form-actions">
-                  <button type="button" className="glass-button" onClick={() => setSellOpen(false)}>
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting || !!lastProtectedAddress}
-                    className="gradient-button"
-                    style={{
-                      opacity: submitting || !!lastProtectedAddress ? 0.6 : 1,
-                      cursor: submitting || !!lastProtectedAddress ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    {submitting ? "Publishing..." : lastProtectedAddress ? "Protected" : "Publish offer"}
-                  </button>
-                </div>
-                {lastProtectedAddress && (
-                  <div className="success-message">
-                    Protected on iExec: <AddressDisplay address={lastProtectedAddress} />
-                  </div>
-                )}
-
-                {lastProtectedAddress && (
-                  <div className="mt-6 rounded-2xl border border-zinc-200 p-4 bg-white">
-                    <h4 className="form-label" style={{ fontSize: 15, fontWeight: 700 }}>Access permissions</h4>
-                    <p className="text-sm text-zinc-600" style={{ marginTop: 6 }}>
-                      Granting happens automatically so your trusted iApp can consume the protected data without extra steps.
-                    </p>
-                    <div className="mt-3 space-y-3 text-sm text-zinc-600">
-                      <div>
-                        <span className="font-semibold text-zinc-800">Protected data</span>{" "}
-                        <AddressDisplay address={lastProtectedAddress} />
-                      </div>
-                      <div>
-                        <span className="font-semibold text-zinc-800">Authorized iApp</span>{" "}
-                        <AddressDisplay address={DEFAULT_AUTHORIZED_APP} />
-                      </div>
-                      <div>
-                        <span className="font-semibold text-zinc-800">Price / Volume</span>{" "}
-                        {formatRlcFromNrlc(grantPlannedPriceNRlc)} RLC ({grantPlannedPriceNRlc} nRLC) • {grantPlannedVolume}{" "}
-                        {grantPlannedVolume === 1 ? "access" : "accesses"}
-                      </div>
-                      <div className="font-semibold text-zinc-800">
-                        Status:{" "}
-                        <span className="font-normal text-zinc-600">
-                          {grantStatus ||
-                            (grantInProgress
-                              ? "Grant in progress…"
-                              : grantResult
-                                ? "Grant completed ✓"
-                                : "Waiting to start…")}
-                        </span>
-                      </div>
-                      {grantResult && (
-                        <div className="mt-2 p-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-900 space-y-1">
-                          <div><strong>Granted!</strong></div>
-                          <div>Protected Data: <span className="font-mono break-all">{grantResult.dataset}</span></div>
-                          <div>Price: {grantResult.datasetprice} nRLC • Volume: {grantResult.volume}</div>
-                          <div>iApp restrict: {String(grantResult.apprestrict)}</div>
-                        </div>
-                      )}
-                      {grantError && !grantInProgress && (
-                        <div className="mt-2 p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-900">{grantError}</div>
-                      )}
-                      {grantError && !grantInProgress && (
-                        <button
-                          type="button"
-                          onClick={handleGrantAccess}
-                          className="gradient-button"
-                          style={{ padding: "8px 14px", width: "fit-content" }}
-                          disabled={grantInProgress}
-                        >
-                          Retry grant
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </form>
-            </motion.div>
+            <SellModal
+              onClose={handleSellModalClose}
+              onSubmit={handleSubmitAlgo}
+              numSteps={numSteps}
+              onNumStepsChange={handleSellStepsChange}
+              submitting={submitting}
+              lastProtectedAddress={lastProtectedAddress}
+              defaultAuthorizedApp={DEFAULT_AUTHORIZED_APP}
+              grantStatus={grantStatus}
+              grantResult={grantResult}
+              grantError={grantError}
+              grantInProgress={grantInProgress}
+              onRetryGrant={handleGrantAccess}
+              grantPriceNrlc={grantPlannedPriceNRlc}
+              grantPriceRlcDisplay={grantPriceRlcDisplay}
+              grantVolume={grantPlannedVolume}
+            />
           </motion.div>
         )}
       </AnimatePresence>
