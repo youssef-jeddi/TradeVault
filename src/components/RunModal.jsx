@@ -1,5 +1,5 @@
 import { motion } from "framer-motion"
-import { X } from "lucide-react"
+import { X, Play, Wallet, Terminal } from "lucide-react"
 
 export default function RunModal({
   algo,
@@ -7,19 +7,21 @@ export default function RunModal({
   onSubmit,
   runAppAddress,
   onRunAppAddressChange,
-  runStepsCount,
-  onRunStepsCountChange,
-  runSteps,
-  onRunStepChange,
+  // New props for DeFi inputs
+  userAddress,
+  runArgs,
+  onRunArgsChange,
+  // Status props
   runStatus,
   runError,
   runTaskId,
   runDealId,
-  runResultPreview,
-  runResultUrl,
-  runResultFilename,
-  explorerSlug,
-  runResultSummary,
+  // Result props
+  runResultSummary,    // We will use this to show the plain text message
+  runResultAction,     // NEW: The transaction object (to/data/value)
+  onExecuteTx,         // NEW: Function to trigger the wallet
+  isExecutingTx,       // NEW: Loading state for execution
+  txHash               // NEW: Success state after execution
 }) {
   if (!algo) return null
 
@@ -32,155 +34,114 @@ export default function RunModal({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="modal-header">
-        <h3 className="modal-title">Run iApp for “{algo.title}”</h3>
+        <h3 className="modal-title">Run Strategy: {algo.title}</h3>
         <button className="modal-close-button" onClick={onClose}>
           <X size={20} style={{ color: "#94a3b8" }} />
         </button>
       </div>
 
+      <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-4 text-xs text-blue-800">
+        <strong>How it works:</strong> The strategy runs inside a TEE. It will generate a transaction for you to sign.
+        No funds move until you approve the final output.
+      </div>
+
       {!algo.protectedAddress ? (
-        <div
-          className="success-message"
-          style={{ background: "#fef3c7", borderColor: "#f59e0b", color: "#92400e" }}
-        >
-          This listing has no protected data address. Ask the seller to protect and grant access.
+        <div className="success-message text-amber-700 bg-amber-50 border-amber-200">
+          This listing has no protected data address.
         </div>
       ) : (
         <form onSubmit={onSubmit} className="modal-form">
+          {/* 1. Target Wallet Field (Read-only) */}
           <div className="form-group">
-            <label className="form-label">iApp address</label>
+            <label className="form-label flex items-center gap-2">
+              <Wallet size={14} /> Target Wallet (You)
+            </label>
             <input
-              value={runAppAddress}
-              onChange={(e) => onRunAppAddressChange(e.target.value)}
-              placeholder="0x... app address granted to read this PD"
-              className="form-input"
-              maxLength={42}
+              value={userAddress || ""}
+              disabled
+              className="form-input bg-zinc-100 text-zinc-500 cursor-not-allowed font-mono text-sm"
+            />
+            <p className="text-xs text-zinc-400 mt-1">
+              The strategy will build the transaction for this address.
+            </p>
+          </div>
+
+          {/* 2. Execution Arguments */}
+          <div className="form-group">
+            <label className="form-label flex items-center gap-2">
+              <Terminal size={14} /> Input Parameters
+            </label>
+            <input
+              value={runArgs}
+              onChange={(e) => onRunArgsChange(e.target.value)}
+              placeholder="e.g., 1000 (USDC Amount) or 'High Risk'"
+              className="form-input font-mono"
               required
             />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Number of Steps</label>
-            <input
-              type="number"
-              min={1}
-              max={10}
-              value={runStepsCount}
-              onChange={(e) => onRunStepsCountChange(Number(e.target.value))}
-              className="form-input"
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Your Steps</label>
-            <div className="form-steps">
-              {Array.from({ length: runStepsCount }).map((_, i) => (
-                <div key={i}>
-                  <input
-                    value={runSteps[i] || ""}
-                    onChange={(e) => onRunStepChange(i, e.target.value)}
-                    placeholder={`Step ${i + 1}`}
-                    className="form-input"
-                  />
-                </div>
-              ))}
-            </div>
-            <p className="form-steps-note">
-              These steps describe your comparison sequence. The iApp can compare them with the seller's
-              protected steps to compute a similarity score.
-            </p>
-            <p className="form-steps-note">
-              Make sure your wallet has deposited enough eRLC into your iExec account—the marketplace will
-              escrow the run price automatically when you launch the task.
+            <p className="text-xs text-zinc-400 mt-1">
+              Arguments required by the Python script (space separated).
             </p>
           </div>
+
+          {/* 3. Run Action */}
           <div className="form-actions">
-            <div className="text-xs text-zinc-500">{runStatus}</div>
-            <button type="submit" className="gradient-button">
-              Run iApp
+            <div className="text-xs text-zinc-500 font-medium">{runStatus}</div>
+            <button
+              type="submit"
+              className="gradient-button flex items-center gap-2"
+              disabled={!!runResultAction} // Disable if we already have a result
+            >
+              <Play size={16} fill="currentColor" />
+              {runResultAction ? "Generation Complete" : "Generate Transaction"}
             </button>
           </div>
 
+          {/* Error Message */}
           {runError && (
-            <div
-              className="success-message"
-              style={{ background: "#fee2e2", borderColor: "#ef4444", color: "#991b1b" }}
-            >
+            <div className="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm">
               {runError}
             </div>
           )}
-          {(runTaskId || runDealId) && (
-            <div className="text-xs text-zinc-500" style={{ marginTop: 8 }}>
-              {runDealId && <div>Deal: {runDealId}</div>}
-              {runTaskId && (
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span>Task: {runTaskId}</span>
-                  <a
-                    href={`https://explorer.iex.ec/${explorerSlug}/task/${runTaskId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline"
-                  >
-                    Open in iExec Explorer
-                  </a>
+
+          {/* 4. EXECUTION ZONE (The "Magic" Moment) */}
+          {runResultAction && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-6 border-t-2 border-dashed border-zinc-200 pt-6"
+            >
+              <h4 className="text-sm font-bold text-zinc-800 mb-3 uppercase tracking-wide">
+                Strategy Output
+              </h4>
+
+              {/* The Recommendation Message */}
+              <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-200 mb-4">
+                <p className="text-zinc-700 text-sm font-medium">
+                  {runResultSummary || "Strategy execution successful."}
+                </p>
+              </div>
+
+              {/* The Execute Button */}
+              {!txHash ? (
+                <button
+                  type="button"
+                  onClick={onExecuteTx}
+                  disabled={isExecutingTx}
+                  className="w-full py-4 rounded-xl font-bold text-white shadow-lg transform transition-all active:scale-95 flex items-center justify-center gap-3"
+                  style={{
+                    background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                    opacity: isExecutingTx ? 0.8 : 1
+                  }}
+                >
+                  {isExecutingTx ? "Check your wallet..." : "🚀 Execute Transaction on Chain"}
+                </button>
+              ) : (
+                <div className="p-4 bg-green-100 text-green-800 rounded-xl border border-green-200 text-center font-bold">
+                  Transaction Sent!
+                  <div className="text-xs font-normal mt-1 opacity-80 break-all">{txHash}</div>
                 </div>
               )}
-            </div>
-          )}
-          {runResultSummary && (
-            <div
-              className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-900"
-              style={{ padding: "14px 16px", fontSize: 14, lineHeight: 1.6 }}
-            >
-              <strong style={{ display: "block", fontSize: 15, marginBottom: 6 }}>Suggested allocation</strong>
-              <span>{runResultSummary}</span>
-              {runResultPreview && runResultPreview !== runResultSummary && (
-                <div style={{ marginTop: 10, fontSize: 12, color: "#047857" }}>
-                  Source notes:
-                  <br />
-                  {runResultPreview.split("\n").map((line, idx) => (
-                    <span key={idx} style={{ display: "block" }}>
-                      {line}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {runResultUrl && !runResultSummary && (
-            <div className="form-group">
-              <label className="form-label">Result preview</label>
-              <pre
-                style={{
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  background: "#f8fafc",
-                  padding: 12,
-                  borderRadius: 8,
-                  border: "1px solid #e5e7eb",
-                  maxHeight: 240,
-                  overflow: "auto",
-                }}
-              >
-                {runResultPreview || "(binary content)"}
-              </pre>
-              <a
-                href={runResultUrl}
-                download={runResultFilename}
-                className="gradient-button"
-                style={{ display: "inline-flex", marginTop: 8, textDecoration: "none" }}
-              >
-                Download {runResultFilename}
-              </a>
-            </div>
-          )}
-          {runResultUrl && runResultSummary && (
-            <a
-              href={runResultUrl}
-              download={runResultFilename}
-              className="gradient-button"
-              style={{ display: "inline-flex", marginTop: 16, textDecoration: "none" }}
-            >
-              Download raw result
-            </a>
+            </motion.div>
           )}
         </form>
       )}

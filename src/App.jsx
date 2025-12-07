@@ -37,7 +37,7 @@ const IEXEC_EXPLORER_SLUG = (import.meta.env.VITE_IEXEC_EXPLORER_SLUG || 'bellec
 // ============================================================================
 const mockAlgos = []
 
-const DEFAULT_AUTHORIZED_APP = "0xB54482AEE1343eF69eb1ade87085aE164E920986"
+const DEFAULT_AUTHORIZED_APP = "0x5240d145EBAf2EeD32c75865Ec8420667Cf51d8e"
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 const DEFAULT_GRANT_PRICE_NRLC = 0
 const DEFAULT_GRANT_VOLUME = 1
@@ -213,6 +213,10 @@ export default function StrategyMarketplace() {
   const [runStepsCount, setRunStepsCount] = useState(1)
   const [runSteps, setRunSteps] = useState([""])
   const [runResultSummary, setRunResultSummary] = useState(null)
+  const [runArgs, setRunArgs] = useState("")
+  const [runResultAction, setRunResultAction] = useState(null)
+  const [isExecutingTx, setIsExecutingTx] = useState(false)
+  const [txHash, setTxHash] = useState("")
 
   const clearRunResultUrl = () => {
     setRunResultUrl((prev) => {
@@ -301,12 +305,14 @@ export default function StrategyMarketplace() {
     setRunTaskId("")
     setRunDealId("")
     setRunResultPreview("")
+
+    // NEW RESET LOGIC
+    setRunArgs("")
+    setRunResultAction(null)
     setRunResultSummary(null)
-    setRunStepsCount(1)
-    setRunSteps([""])
-    setRunResultPath("")
-    clearRunResultUrl()
-    setRunResultFilename("result.txt")
+    setIsExecutingTx(false)
+    setTxHash("")
+
     setRunOpen(true)
   }
 
@@ -319,12 +325,14 @@ export default function StrategyMarketplace() {
     setRunStatus("Requesting wallet signature…")
     setRunResultSummary(null)
     try {
+      //const finalArgs = `${wallet.address} ${runArgs}`.trim()
+      const finalArgs = `{"wallet":"${wallet.address}","amount":${runArgs}}`
       const stepsClean = (runSteps || []).map((s) => String(s || '').trim()).filter(Boolean)
       const args = stepsClean.length ? JSON.stringify({ steps: stepsClean }) : ""
       const res = await dataProtectorCore.processProtectedData({
         protectedData: runAlgo.protectedAddress,
         app: runAppAddress,
-        args,
+        args: finalArgs,
         encryptResult: true,
         path: runResultPath || undefined,
         dataMaxPrice: Number.MAX_SAFE_INTEGER,
@@ -385,7 +393,11 @@ export default function StrategyMarketplace() {
             let preview = text.slice(0, 2000)
             try {
               const parsed = JSON.parse(text)
-              if (parsed && typeof parsed === 'object') {
+              if (parsed?.action && parsed?.action?.calldata) {
+                setRunResultAction(parsed.action)
+                setRunResultSummary(parsed.message || "Transaction generated successfully.")
+                preview = "Transaction Ready for Execution"
+              } else if (parsed && typeof parsed === 'object') {
                 if ('fiability-score' in parsed) {
                   const score = parsed['fiability-score']
                   preview = `Fiability score: ${score}`
@@ -485,6 +497,32 @@ export default function StrategyMarketplace() {
     }
   }
 
+  async function handleExecuteTx() {
+    if (!runResultAction || !wallet) return
+    setIsExecutingTx(true)
+    try {
+      const provider = await wallet.getEthereumProvider()
+
+      // Request signature from user's wallet
+      const txHash = await provider.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: wallet.address,
+          to: runResultAction.target_contract,
+          data: runResultAction.calldata,
+          value: runResultAction.value || "0x0" // value is hex string
+        }]
+      })
+
+      setTxHash(txHash)
+    } catch (e) {
+      console.error("Transaction failed:", e)
+      alert("Transaction failed: " + e.message)
+    } finally {
+      setIsExecutingTx(false)
+    }
+  }
+
   // Delist handler: revoke access and hide locally
   async function handleDelist(algo) {
     try {
@@ -516,6 +554,7 @@ export default function StrategyMarketplace() {
     const fd = new FormData(e.currentTarget)
     const form = Object.fromEntries(fd.entries())
     setSubmitting(true)
+
     try {
       if (!isPrivyConnected || !dataProtectorCore) {
         alert("Please connect your wallet (Privy) before listing.")
@@ -524,51 +563,49 @@ export default function StrategyMarketplace() {
         return
       }
 
-      const steps = []
-      for (let i = 1; i <= numSteps; i++) {
-        const stepValue = form[`step_${i}`]
-        if (stepValue && stepValue.trim()) {
-          steps.push(stepValue.trim())
-        }
+      // 1. Get the uploaded file
+      const file = fd.get("strategyFile")
+      if (!file || !file.name.endsWith(".py")) {
+        alert("Please upload a valid .py Python strategy file.")
+        setSubmitting(false)
+        return
       }
+
+      // 2. ZIP the file as "strategy.py"
+      // This ensures the generic runner always finds "strategy.py" regardless of what the user named it
+      const zip = new JSZip()
+      const fileContent = await file.arrayBuffer()
+      zip.file("strategy.py", fileContent)
+
+
+      const zipBlob = await zip.generateAsync({ type: "uint8array" })
 
       const priceRlc = normalizeRlcInput(form.priceEth ?? 0.02, 0.02)
       const priceNRlc = rlcToNrlc(priceRlc)
 
-      const privatePayload = {
-        title: String(form.title || ""),
-        asset: String(form.asset || ""),
-        priceEth: priceRlc,
-        createdAt: new Date().toISOString(),
-        owner: wallet?.address || "",
-        steps: steps,
-      }
-
-      const encoder = new TextEncoder()
-      const bytes = encoder.encode(JSON.stringify(privatePayload))
-      // Include both a file payload and per-step string entries for broader compatibility
-      const dataEntries = { "file-key": new Uint8Array(bytes), strategy_json: new Uint8Array(bytes) }
-      steps.forEach((s, i) => {
-        const key = `step${i + 1}`
-        try { dataEntries[key] = String(s) } catch { }
-      })
-
+      // 3. Protect the ZIP
       const result = await dataProtectorCore.protectData({
-        name: String(form.title || "strategy"),
-        data: dataEntries,
+        name: String(form.title || "DeFi Strategy"),
+        data: {
+          // The key doesn't matter much if we mount the whole zip, 
+          // but "application/zip" is standard for file buffers
+          zipfile: zipBlob
+        },
       })
 
       const protectedAddress = result.address
+
+      // 4. Update Local State
       const newAlgo = {
-        id: `a${Date.now()}`,
+        id: `s${Date.now()}`,
         title: String(form.title),
         asset: String(form.asset),
-        owner: String(result?.owner || wallet?.address || "you"),
+        owner: wallet?.address || "you",
         priceEth: priceRlc,
         reviews: 0,
         protectedAddress,
-        winRate: Math.round(Math.random() * 30 + 50),
-        image: "/strategy-meeting.png",
+        winRate: null, // No winrate for new strategies
+        tags: ['DeFi', 'Calldata'],
       }
 
       setAlgos((prev) => [newAlgo, ...prev])
@@ -576,6 +613,8 @@ export default function StrategyMarketplace() {
       setGrantPlannedPriceNRlc(priceNRlc)
       setGrantPlannedVolume(DEFAULT_GRANT_VOLUME)
       resetGrantState("Auto grant scheduled…")
+
+      // 5. Start Grant Workflow
       startGrantWorkflow({
         protectedData: protectedAddress,
         prefix: "Auto grant",
@@ -584,6 +623,7 @@ export default function StrategyMarketplace() {
         pricePerAccess: priceNRlc,
         numberOfAccess: DEFAULT_GRANT_VOLUME,
       })
+
     } catch (err) {
       console.error("Protect strategy failed:", err)
       alert("Failed to protect strategy. Please try again.")
@@ -967,10 +1007,18 @@ export default function StrategyMarketplace() {
               onSubmit={handleRunIapp}
               runAppAddress={runAppAddress}
               onRunAppAddressChange={handleRunAppAddressChange}
-              runStepsCount={runStepsCount}
-              onRunStepsCountChange={handleRunStepsCountChange}
-              runSteps={runSteps}
-              onRunStepChange={handleRunStepChange}
+
+              // NEW PROPS
+              userAddress={wallet?.address}
+              runArgs={runArgs}
+              onRunArgsChange={setRunArgs}
+              runResultAction={runResultAction}
+              runResultSummary={runResultSummary}
+              onExecuteTx={handleExecuteTx}
+              isExecutingTx={isExecutingTx}
+              txHash={txHash}
+
+              // Existing status props
               runStatus={runStatus}
               runError={runError}
               runTaskId={runTaskId}
@@ -979,7 +1027,6 @@ export default function StrategyMarketplace() {
               runResultUrl={runResultUrl}
               runResultFilename={runResultFilename}
               explorerSlug={IEXEC_EXPLORER_SLUG}
-              runResultSummary={runResultSummary}
             />
           </motion.div>
         )}

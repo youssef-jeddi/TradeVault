@@ -1,12 +1,11 @@
 import { motion } from "framer-motion"
-import { X } from "lucide-react"
+import { X, Upload, FileCode, Check } from "lucide-react" // Added icons
 import AddressDisplay from "./AddressDisplay"
+import { useState } from "react"
 
 export default function SellModal({
   onClose,
   onSubmit,
-  numSteps,
-  onNumStepsChange,
   submitting,
   lastProtectedAddress,
   defaultAuthorizedApp,
@@ -19,9 +18,11 @@ export default function SellModal({
   grantPriceRlcDisplay,
   grantVolume,
 }) {
-  const handleStepsChange = (value) => {
-    const next = Math.max(1, Math.min(10, Number(value)))
-    onNumStepsChange(next)
+  const [fileName, setFileName] = useState(null)
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0]
+    if (file) setFileName(file.name)
   }
 
   return (
@@ -33,64 +34,87 @@ export default function SellModal({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="modal-header">
-        <h3 className="modal-title">List your strategy</h3>
+        <h3 className="modal-title">Sell DeFi Strategy</h3>
         <button className="modal-close-button" onClick={onClose}>
           <X size={20} style={{ color: "#94a3b8" }} />
         </button>
       </div>
       <p className="modal-description">
-        Describe your strategy. Encryption is handled by iExec DataProtector.
+        Upload your Python logic. It will be encrypted and executed securely in a TEE.
+        Buyers only see the transaction output, never your code.
       </p>
+
       <form className="modal-form" onSubmit={onSubmit}>
         <div className="form-group">
-          <label className="form-label">Title</label>
-          <input name="title" required placeholder="e.g., BTC Momentum V3" className="form-input" />
+          <label className="form-label">Strategy Title</label>
+          <input name="title" required placeholder="e.g., Aave/Compound Yield Optimizer" className="form-input" />
         </div>
+
         <div className="form-grid-2">
           <div className="form-group">
             <label className="form-label">Asset</label>
             <select name="asset" className="form-select">
-              <option value="BTC">BTC</option>
+              <option value="USDC">USDC</option>
               <option value="ETH">ETH</option>
+              <option value="WBTC">WBTC</option>
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label">Price (RLC)</label>
-            <input name="priceEth" type="number" step="0.001" defaultValue={0.02} className="form-input" />
+            <label className="form-label">Price per Run (RLC)</label>
+            <input name="priceEth" type="number" step="0.001" defaultValue={2} className="form-input" />
           </div>
         </div>
 
-        <div className="form-steps-grid">
-          <div className="form-group">
-            <label className="form-label">Number of Steps</label>
+        {/* NEW: File Upload Section */}
+        <div className="form-group">
+          <label className="form-label">Strategy Code (.py)</label>
+          <div className="file-upload-wrapper" style={{
+            border: "2px dashed #cbd5e1",
+            borderRadius: "8px",
+            padding: "20px",
+            textAlign: "center",
+            cursor: "pointer",
+            background: "#f8fafc",
+            position: "relative"
+          }}>
             <input
-              type="number"
-              min={1}
-              max={10}
-              value={numSteps}
-              onChange={(e) => handleStepsChange(e.target.value)}
-              className="form-input"
+              type="file"
+              name="strategyFile"
+              accept=".py"
+              required
+              onChange={handleFileChange}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: "100%",
+                opacity: 0,
+                cursor: "pointer"
+              }}
             />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Strategy Steps (confidential - will be encrypted)</label>
-            <div className="form-steps">
-              {Array.from({ length: numSteps }).map((_, i) => (
-                <div key={i}>
-                  <input name={`step_${i + 1}`} placeholder={`Step ${i + 1}`} className="form-input" />
-                </div>
-              ))}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
+              {fileName ? (
+                <>
+                  <FileCode size={32} color="#0ea5e9" />
+                  <span style={{ fontWeight: 600, color: "#0f172a" }}>{fileName}</span>
+                </>
+              ) : (
+                <>
+                  <Upload size={24} color="#64748b" />
+                  <span style={{ color: "#64748b" }}>Click to upload logic.py</span>
+                </>
+              )}
             </div>
-            <p className="form-steps-note">
-              These steps will be encrypted and sent to the backend. They won't be displayed in the marketplace.
-            </p>
           </div>
+          <p className="form-steps-note">
+            Your script must implement a <code>generate_calldata</code> function.
+          </p>
         </div>
 
+        {/* Existing Footer Actions */}
         <div className="form-actions">
-          <button type="button" className="glass-button" onClick={onClose}>
-            Cancel
-          </button>
+          <button type="button" className="glass-button" onClick={onClose}>Cancel</button>
           <button
             type="submit"
             disabled={submitting || !!lastProtectedAddress}
@@ -100,78 +124,78 @@ export default function SellModal({
               cursor: submitting || !!lastProtectedAddress ? "not-allowed" : "pointer",
             }}
           >
-            {submitting ? "Publishing..." : lastProtectedAddress ? "Protected" : "Publish offer"}
+            {submitting ? "Protecting & Publishing..." : lastProtectedAddress ? "Strategy Listed" : "Publish Strategy"}
           </button>
         </div>
 
+        {/* Existing Grant Status Display (Kept same as before) */}
         {lastProtectedAddress && (
-          <div className="success-message">
-            Protected on iExec: <AddressDisplay address={lastProtectedAddress} />
-          </div>
-        )}
-
-        {lastProtectedAddress && (
-          <div className="mt-6 rounded-2xl border border-zinc-200 p-4 bg-white">
-            <h4 className="form-label" style={{ fontSize: 15, fontWeight: 700 }}>
-              Access permissions
-            </h4>
-            <p className="text-sm text-zinc-600" style={{ marginTop: 6 }}>
-              Granting happens automatically so your trusted iApp can consume the protected data without extra steps.
-            </p>
-            <div className="mt-3 space-y-3 text-sm text-zinc-600">
-              <div>
-                <span className="font-semibold text-zinc-800">Protected data</span>{" "}
+          <div className="mt-6 rounded-2xl border border-zinc-200 bg-white overflow-hidden">
+            {/* 1. Protection Success Header */}
+            <div className="p-4 border-b border-zinc-100 bg-zinc-50">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                <span className="font-bold text-zinc-700 text-sm">Step 1: Data Protected</span>
+              </div>
+              <div className="text-xs text-zinc-500 flex items-center gap-2">
                 <AddressDisplay address={lastProtectedAddress} />
               </div>
-              <div>
-                <span className="font-semibold text-zinc-800">Authorized iApp</span>{" "}
-                <AddressDisplay address={defaultAuthorizedApp} />
-              </div>
-              <div>
-                <span className="font-semibold text-zinc-800">Price / Volume</span>{" "}
-                {grantPriceRlcDisplay} RLC ({grantPriceNrlc} nRLC) • {grantVolume}{" "}
-                {grantVolume === 1 ? "access" : "accesses"}
-              </div>
-              <div className="font-semibold text-zinc-800">
-                Status:{" "}
-                <span className="font-normal text-zinc-600">
-                  {grantStatus ||
-                    (grantInProgress
-                      ? "Grant in progress…"
-                      : grantResult
-                      ? "Grant completed ✓"
-                      : "Waiting to start…")}
+            </div>
+
+            {/* 2. Grant Access Status Section */}
+            <div className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                {grantResult ? (
+                  <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                ) : grantError ? (
+                  <div className="h-2 w-2 rounded-full bg-red-500"></div>
+                ) : (
+                  <div className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse"></div>
+                )}
+                <span className="font-bold text-zinc-700 text-sm">
+                  Step 2: Granting Access to iApp
                 </span>
               </div>
+
+              {/* Dynamic Status Message */}
+              <div className="text-sm text-zinc-600 mb-4 pl-4 border-l-2 border-zinc-200">
+                {grantStatus || (grantInProgress ? "Initializing grant..." : "Waiting...")}
+              </div>
+
+              {/* SUCCESS STATE: This is the new part you wanted */}
               {grantResult && (
-                <div className="mt-2 p-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-900 space-y-1">
-                  <div>
-                    <strong>Granted!</strong>
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-xl bg-green-50 border border-green-200 p-4 flex flex-col gap-2"
+                >
+                  <div className="flex items-center gap-2 text-green-800 font-bold text-sm">
+                    <Check size={18} />
+                    <span>Success! Strategy is Live.</span>
                   </div>
-                  <div>
-                    Protected Data: <span className="font-mono break-all">{grantResult.dataset}</span>
-                  </div>
-                  <div>
+                  <p className="text-green-700 text-xs leading-relaxed">
+                    Your strategy is now protected and authorized for the generic runner.
+                    Users can now find it in the marketplace and purchase executions.
+                  </p>
+                  <div className="mt-2 text-xs text-green-800 font-mono bg-green-100/50 p-2 rounded">
                     Price: {grantResult.datasetprice} nRLC • Volume: {grantResult.volume}
                   </div>
-                  <div>iApp restrict: {String(grantResult.apprestrict)}</div>
-                </div>
+                </motion.div>
               )}
+
+              {/* ERROR STATE */}
               {grantError && !grantInProgress && (
-                <div className="mt-2 p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-900">
-                  {grantError}
+                <div className="rounded-xl bg-red-50 border border-red-200 p-4">
+                  <div className="text-red-800 font-bold text-sm mb-1">Grant Failed</div>
+                  <div className="text-red-700 text-xs">{grantError}</div>
+                  <button
+                    type="button"
+                    onClick={onRetryGrant}
+                    className="mt-3 text-xs bg-red-100 hover:bg-red-200 text-red-800 py-1.5 px-3 rounded-lg font-medium transition-colors"
+                  >
+                    Retry Grant
+                  </button>
                 </div>
-              )}
-              {grantError && !grantInProgress && (
-                <button
-                  type="button"
-                  onClick={onRetryGrant}
-                  className="gradient-button"
-                  style={{ padding: "8px 14px", width: "fit-content" }}
-                  disabled={grantInProgress}
-                >
-                  Retry grant
-                </button>
               )}
             </div>
           </div>
