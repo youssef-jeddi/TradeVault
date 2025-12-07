@@ -324,6 +324,7 @@ export default function StrategyMarketplace() {
     setRunError("")
     setRunStatus("Requesting wallet signature…")
     setRunResultSummary(null)
+    setRunResultSummary(null)
     try {
       //const finalArgs = `${wallet.address} ${runArgs}`.trim()
       const finalArgs = `{"wallet":"${wallet.address}","amount":${runArgs}}`
@@ -1027,6 +1028,7 @@ export default function StrategyMarketplace() {
               runResultUrl={runResultUrl}
               runResultFilename={runResultFilename}
               explorerSlug={IEXEC_EXPLORER_SLUG}
+              runResultSummary={runResultSummary}
             />
           </motion.div>
         )}
