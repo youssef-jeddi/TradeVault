@@ -40,7 +40,7 @@ const mockAlgos = []
 const DEFAULT_AUTHORIZED_APP = "0x5240d145EBAf2EeD32c75865Ec8420667Cf51d8e"
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 const DEFAULT_GRANT_PRICE_NRLC = 0
-const DEFAULT_GRANT_VOLUME = 1
+const DEFAULT_GRANT_VOLUME = 10000000
 const MAX_AUTO_GRANT_ATTEMPTS = 3
 const AUTO_GRANT_RETRY_DELAY_MS = 4000
 const NRLC_PER_RLC = 1_000_000_000
@@ -1028,7 +1028,6 @@ export default function StrategyMarketplace() {
               runResultUrl={runResultUrl}
               runResultFilename={runResultFilename}
               explorerSlug={IEXEC_EXPLORER_SLUG}
-              runResultSummary={runResultSummary}
             />
           </motion.div>
         )}

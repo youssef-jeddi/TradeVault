@@ -1,5 +1,5 @@
 import { motion } from "framer-motion"
-import { X, Play, Wallet, Terminal } from "lucide-react"
+import { X, Play, Wallet, Terminal, ExternalLink, Loader2 } from "lucide-react" // Added ExternalLink & Loader2
 
 export default function RunModal({
   algo,
@@ -7,21 +7,19 @@ export default function RunModal({
   onSubmit,
   runAppAddress,
   onRunAppAddressChange,
-  // New props for DeFi inputs
   userAddress,
   runArgs,
   onRunArgsChange,
-  // Status props
   runStatus,
   runError,
   runTaskId,
   runDealId,
-  // Result props
-  runResultSummary,    // We will use this to show the plain text message
-  runResultAction,     // NEW: The transaction object (to/data/value)
-  onExecuteTx,         // NEW: Function to trigger the wallet
-  isExecutingTx,       // NEW: Loading state for execution
-  txHash               // NEW: Success state after execution
+  runResultSummary,
+  runResultAction,
+  onExecuteTx,
+  isExecutingTx,
+  txHash,
+  explorerSlug = 'bellecour' // Default to bellecour if undefined
 }) {
   if (!algo) return null
 
@@ -61,9 +59,6 @@ export default function RunModal({
               disabled
               className="form-input bg-zinc-100 text-zinc-500 cursor-not-allowed font-mono text-sm"
             />
-            <p className="text-xs text-zinc-400 mt-1">
-              The strategy will build the transaction for this address.
-            </p>
           </div>
 
           {/* 2. Execution Arguments */}
@@ -74,27 +69,54 @@ export default function RunModal({
             <input
               value={runArgs}
               onChange={(e) => onRunArgsChange(e.target.value)}
-              placeholder="e.g., 1000 (USDC Amount) or 'High Risk'"
+              placeholder="e.g., 1000 (USDC Amount)"
               className="form-input font-mono"
               required
             />
-            <p className="text-xs text-zinc-400 mt-1">
-              Arguments required by the Python script (space separated).
-            </p>
           </div>
 
           {/* 3. Run Action */}
           <div className="form-actions">
-            <div className="text-xs text-zinc-500 font-medium">{runStatus}</div>
+            <div className="text-xs text-zinc-500 font-medium flex items-center gap-2">
+              {runStatus && runStatus.includes("...") && <Loader2 size={12} className="animate-spin" />}
+              {runStatus}
+            </div>
             <button
               type="submit"
               className="gradient-button flex items-center gap-2"
-              disabled={!!runResultAction} // Disable if we already have a result
+              disabled={!!runResultAction || (runStatus && runStatus.includes("..."))}
             >
               <Play size={16} fill="currentColor" />
               {runResultAction ? "Generation Complete" : "Generate Transaction"}
             </button>
           </div>
+
+          {/* --- NEW: Task ID & Explorer Link --- */}
+          {runTaskId && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              className="mt-4"
+            >
+              <div className="flex items-center justify-between p-3 bg-zinc-50 rounded-lg border border-zinc-200">
+                <div className="flex flex-col">
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">iExec Task ID</span>
+                  <span className="font-mono text-xs text-zinc-700 truncate w-48" title={runTaskId}>
+                    {runTaskId}
+                  </span>
+                </div>
+                <a
+                  href={`https://explorer.iex.ec/${explorerSlug}/task/${runTaskId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs flex items-center gap-1 font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                >
+                  View on Explorer <ExternalLink size={12} />
+                </a>
+              </div>
+            </motion.div>
+          )}
+          {/* ------------------------------------- */}
 
           {/* Error Message */}
           {runError && (
@@ -103,7 +125,7 @@ export default function RunModal({
             </div>
           )}
 
-          {/* 4. EXECUTION ZONE (The "Magic" Moment) */}
+          {/* 4. EXECUTION ZONE */}
           {runResultAction && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -114,14 +136,12 @@ export default function RunModal({
                 Strategy Output
               </h4>
 
-              {/* The Recommendation Message */}
               <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-200 mb-4">
                 <p className="text-zinc-700 text-sm font-medium">
                   {runResultSummary || "Strategy execution successful."}
                 </p>
               </div>
 
-              {/* The Execute Button */}
               {!txHash ? (
                 <button
                   type="button"
@@ -137,7 +157,7 @@ export default function RunModal({
                 </button>
               ) : (
                 <div className="p-4 bg-green-100 text-green-800 rounded-xl border border-green-200 text-center font-bold">
-                  Transaction Sent!
+                  Transaction Sent! 🎉
                   <div className="text-xs font-normal mt-1 opacity-80 break-all">{txHash}</div>
                 </div>
               )}
