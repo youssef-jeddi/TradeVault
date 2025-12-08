@@ -4,15 +4,21 @@ import zipfile
 from borsh_construct import String, I128, F64, Bool
 
 
-def getValue(path: str, schema: str):
+def getValue(path: str, schema: str, bulkIndex: int = None) -> any:
     file_path = path.replace('.', '/')
     IEXEC_IN = os.getenv('IEXEC_IN')
-    IEXEC_DATASET_FILENAME = os.getenv('IEXEC_DATASET_FILENAME')
+    file_name: str
 
-    if IEXEC_DATASET_FILENAME == None:
+    if bulkIndex != None:
+        file_name = os.getenv(
+            f'IEXEC_DATASET_{bulkIndex}_FILENAME')
+    else:
+        file_name = os.getenv('IEXEC_DATASET_FILENAME')
+
+    if file_name == None:
         raise Exception('Missing protected data')
 
-    dataset_file_path = os.path.join(IEXEC_IN, IEXEC_DATASET_FILENAME)
+    dataset_file_path = os.path.join(IEXEC_IN, file_name)
 
     file_bytes: bytes
     try:

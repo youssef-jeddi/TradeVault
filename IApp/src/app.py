@@ -1,405 +1,177 @@
 import json
 import os
-import re
-import time
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+import sys
+import traceback
+import importlib.util
+from typing import Any, Dict, Optional
 
-# Helper you already have; reads entries from the protected dataset ZIP.
-# We'll read ONE value: a string named "steps" that contains a JSON array of rule strings.
-import protected_data
-
+# Helper to read from protected Zip
+import protected_data 
 
 # =============================================================================
-# iExec & external data configuration
+# Configuration
 # =============================================================================
-# iExec output directory: we must write results here.
 IEXEC_OUT = os.getenv("IEXEC_OUT", "/iexec_out")
-
-# Maximum % any single action may instruct (BUY/SELL). Change via env on deployment.
-MAX_POSITION_PERCENT = float(os.getenv("MAX_POSITION_PERCENT", "50"))
-
-# Public BTC hourly (last 24h) prices via CoinGecko.
-COINGECKO_URL = (
-    "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-    "?vs_currency=usd&days=1&interval=hourly"
-)
+IEXEC_IN = os.getenv("IEXEC_IN", "/iexec_in")
+IEXEC_DATASET_FILENAME = os.getenv("IEXEC_DATASET_FILENAME", "")
 
 
 # =============================================================================
-# Minimal HTTP JSON with fallback (requests -> urllib)
+# Output Helpers
 # =============================================================================
-def http_get_json(url: str) -> Dict[str, Any]:
-    """Fetch JSON from URL with a timeout; prefer requests, fall back to urllib."""
-    try:
-        import requests  # type: ignore
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        return r.json()
-    except Exception:
-        import urllib.request
-        req = urllib.request.Request(url, headers={"User-Agent": "iexec-iapp/1.0"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = resp.read()
-        return json.loads(data.decode("utf-8"))
-
-
-# =============================================================================
-# Load seller steps (single protected string: "steps" → JSON array of strings)
-# =============================================================================
-def load_steps_array() -> List[str]:
-    """
-    Preferred: a single protected string key 'steps' containing all steps (JSON array or multi-line text).
-    Fallback: sequential keys 'step1','step2',... each containing one rule string.
-    """
-    collected = []
-    idx = 1
-    while True:
-        key = f"step{idx}"
-        try:
-            s = protected_data.getValue(key, "string")
-            if s and s.strip():
-                collected.append(s.strip())
-                idx += 1
-            else:
-                break
-        except Exception:
-            break
-    if not collected:
-        raise ValueError("No valid step data found (neither 'steps' nor 'stepN').")
-    return collected
-
-
-
-
-# =============================================================================
-# Parse rule-strings into a normalized structure
-# =============================================================================
-# We accept two formats (case-insensitive):
-#  1) ACTION if pct_change Wh >= X% then P%
-#  2) ACTION if pct_change Wh in [A%, B%] then P%
-# Where:
-#   - ACTION ∈ {BUY, SELL, HOLD}
-#   - W ∈ {1,2,4,6,12,24}
-#   - X, A, B, P are floats; percentages may include a leading minus and decimals.
-
-# Threshold rule: "... >= X%" or "... <= X%"
-THRESHOLD_RE = re.compile(
-    r"""^\s*
-        (?P<action>buy|sell|hold)\s+if\s+pct_change\s+(?P<wh>\d+)\s*h\s*
-        (?P<op>>=|<=)\s*
-        (?P<thresh>-?\d+(?:\.\d+)?)\s*%\s*
-        then\s*(?P<percent>\d+(?:\.\d+)?)\s*%\s*
-        $""",
-    re.IGNORECASE | re.VERBOSE,
-)
-
-# Range rule: "... in [A%, B%]"
-RANGE_RE = re.compile(
-    r"""^\s*
-        (?P<action>buy|sell|hold)\s+if\s+pct_change\s+(?P<wh>\d+)\s*h\s*
-        in\s*\[\s*(?P<low>-?\d+(?:\.\d+)?)\s*%\s*,\s*(?P<high>-?\d+(?:\.\d+)?)\s*%\s*\]\s*
-        then\s*(?P<percent>\d+(?:\.\d+)?)\s*%\s*
-        $""",
-    re.IGNORECASE | re.VERBOSE,
-)
-
-def parse_rule(rule_str: str) -> Dict[str, Any]:
-    """
-    Parse a single rule string into a dict:
-      {
-        "action": "BUY"|"SELL"|"HOLD",
-        "window_hours": int,
-        "type": "threshold"|"range",
-        "gte": float or None,
-        "lte": float or None,
-        "percent": float
-      }
-    Raises ValueError if the string doesn't match the supported formats.
-    """
-    m = THRESHOLD_RE.match(rule_str)
-    if m:
-        action = m.group("action").upper()
-        wh = int(m.group("wh"))
-        if wh not in (1, 2, 4, 6, 12, 24):
-            raise ValueError(f"window_hours must be one of 1,2,4,6,12,24 (got {wh})")
-        op = m.group("op")
-        thresh = float(m.group("thresh"))
-        percent = float(m.group("percent"))
-
-        # Convert to unified constraints (gte/lte)
-        gte = thresh if op == ">=" else None
-        lte = thresh if op == "<=" else None
-
-        return {
-            "action": action,
-            "window_hours": wh,
-            "type": "threshold",
-            "gte": gte,
-            "lte": lte,
-            "percent": percent,
-        }
-
-    m = RANGE_RE.match(rule_str)
-    if m:
-        action = m.group("action").upper()
-        wh = int(m.group("wh"))
-        if wh not in (1, 2, 4, 6, 12, 24):
-            raise ValueError(f"window_hours must be one of 1,2,4,6,12,24 (got {wh})")
-        low = float(m.group("low"))
-        high = float(m.group("high"))
-        if low > high:
-            raise ValueError(f"range low cannot exceed high (got [{low}%, {high}%])")
-        percent = float(m.group("percent"))
-        return {
-            "action": action,
-            "window_hours": wh,
-            "type": "range",
-            "gte": low,
-            "lte": high,
-            "percent": percent,
-        }
-
-    raise ValueError(
-        "Rule not recognized. Use either:\n"
-        "  - 'BUY if pct_change 1h >= 0.5% then 10%'\n"
-        "  - 'SELL if pct_change 6h in [-5%, -1.5%] then 20%'\n"
-    )
-
-
-# =============================================================================
-# Market data (BTC hourly last ~24h)
-# =============================================================================
-def fetch_btc_hourly_prices() -> List[Tuple[int, float]]:
-    """
-    Fetches the last 24 hourly BTC/USD closing prices from CryptoCompare.
-    Returns a list of (timestamp_ms, price).
-    """
-    url = "https://min-api.cryptocompare.com/data/v2/histohour?fsym=BTC&tsym=USD&limit=24"
-    data = http_get_json(url)
-
-    if data.get("Response") != "Success":
-        raise RuntimeError(f"CryptoCompare error: {data.get('Message', 'unknown')}")
-
-    candles = data["Data"]["Data"]
-    if not isinstance(candles, list) or len(candles) < 2:
-        raise RuntimeError("Unexpected CryptoCompare response format.")
-
-    # convert to list of (timestamp_ms, close)
-    prices: List[Tuple[int, float]] = [
-        (int(c["time"]) * 1000, float(c["close"])) for c in candles if "close" in c
-    ]
-    if len(prices) < 2:
-        raise RuntimeError("Insufficient price data from CryptoCompare.")
-
-    return prices[-24:]
-
-
-# =============================================================================
-# Indicator & evaluation
-# =============================================================================
-def pct_change(prices: List[Tuple[int, float]], window_hours: int) -> Optional[float]:
-    """
-    % change over 'window_hours':
-      pct = 100 * (last - ref) / ref
-    'last' is the final element; 'ref' is window_hours steps earlier.
-    """
-    if len(prices) <= window_hours:
-        return None
-    last = prices[-1][1]
-    ref = prices[-1 - window_hours][1]
-    if ref == 0:
-        return None
-    return 100.0 * (last - ref) / ref
-
-
-def evaluate_rules_now(
-    prices: List[Tuple[int, float]],
-    parsed_rules: List[Dict[str, Any]],
-    max_position_percent: float,
-) -> Dict[str, Any]:
-    """
-    Evaluate all rules and derive BUY/SELL percentages.
-    The first satisfied BUY and SELL rules (respectively) provide the targets.
-    If no rule supplies a target, fall back to the default split.
-    """
-    DEFAULT_BUY_PERCENT = float(os.getenv("DEFAULT_BUY_PERCENT", "80"))
-    DEFAULT_SELL_PERCENT = float(os.getenv("DEFAULT_SELL_PERCENT", "20"))
-
-    explanations: List[str] = []
-    buy_percent: Optional[float] = None
-    sell_percent: Optional[float] = None
-    buy_rule: Optional[str] = None
-    sell_rule: Optional[str] = None
-    buy_indicator: Optional[float] = None
-    sell_indicator: Optional[float] = None
-
-    for r in parsed_rules:
-        name = f"{r['action']} if pct_change {r['window_hours']}h"
-        win = int(r["window_hours"])
-        val = pct_change(prices, win)
-        if val is None:
-            explanations.append(f"[{name}] skipped: not enough data for {win}h window.")
-            continue
-
-        # Build boolean based on threshold/range (we already normalized to gte/lte).
-        ok_gte = (r["gte"] is None) or (val >= float(r["gte"]))
-        ok_lte = (r["lte"] is None) or (val <= float(r["lte"]))
-        passed = ok_gte and ok_lte
-
-        explanations.append(
-            f"[{name}] => {val:.4f}% vs "
-            f"gte={r['gte'] if r['gte'] is not None else '-'}, "
-            f"lte={r['lte'] if r['lte'] is not None else '-'} "
-            f"→ pass={passed}"
-        )
-
-        if not passed:
-            continue
-
-        percent = max(0.0, min(float(r["percent"]), float(max_position_percent)))
-        if r["action"] == "BUY" and buy_percent is None:
-            buy_percent = percent
-            buy_rule = name
-            buy_indicator = val
-        elif r["action"] == "SELL" and sell_percent is None:
-            sell_percent = percent
-            sell_rule = name
-            sell_indicator = val
-        # HOLD rules are logged but never drive the final recommendation
-
-        if buy_percent is not None and sell_percent is not None:
-            break
-
-    if buy_percent is None:
-        buy_percent = min(DEFAULT_BUY_PERCENT, float(max_position_percent))
-        buy_rule = buy_rule or "fallback_default_buy"
-        explanations.append(
-            f"[fallback BUY] Using default BUY {buy_percent:.2f}% "
-            f"(MAX cap {max_position_percent}%)."
-        )
-    if sell_percent is None:
-        sell_percent = min(DEFAULT_SELL_PERCENT, float(max_position_percent))
-        sell_rule = sell_rule or "fallback_default_sell"
-        explanations.append(
-            f"[fallback SELL] Using default SELL {sell_percent:.2f}% "
-            f"(MAX cap {max_position_percent}%)."
-        )
-
-    primary_action = "BUY" if buy_percent >= sell_percent else "SELL"
-    primary_percent = buy_percent if primary_action == "BUY" else sell_percent
-
-    return {
-        "action": primary_action,
-        "percent": primary_percent,
-        "buy_percent": buy_percent,
-        "sell_percent": sell_percent,
-        "matched_rules": {"buy": buy_rule, "sell": sell_rule},
-        "indicator_values": {"buy": buy_indicator, "sell": sell_indicator},
-        "explanations": explanations,
-    }
-
-
-# =============================================================================
-# iExec outputs
-# =============================================================================
-def write_iexec_outputs(result_obj: Dict[str, Any]) -> None:
-    """
-    Write:
-      - result.json: machine-readable output
-      - computed.json: manifest with deterministic-output-path → result.json
-    """
+def write_outputs(result_obj: Dict[str, Any]) -> None:
+    """Write result.json and computed.json"""
     os.makedirs(IEXEC_OUT, exist_ok=True)
     result_path = os.path.join(IEXEC_OUT, "result.json")
+    
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(result_obj, f, indent=2)
+        
     with open(os.path.join(IEXEC_OUT, "computed.json"), "w", encoding="utf-8") as f:
         json.dump({"deterministic-output-path": result_path}, f)
 
+def write_error(message: str) -> None:
+    err_obj = {
+        "status": "error",
+        "error": message,
+        "timestamp": 0 # timestamp isn't critical for error
+    }
+    write_outputs(err_obj)
+
+# =============================================================================
+# Dynamic Strategy Loader
+# =============================================================================
+def load_strategy_module() -> Any:
+    """
+    Extracts 'target_code' from the protected data
+    and loads it as a Python module.
+    """
+    try:
+        import zipfile
+        
+        # 1. Get the raw zip bytes from protected data
+        # 'zipfile' is the key in protected data schema, 'file' returns bytes
+        code_bytes = protected_data.getValue('zipfile', 'file')
+
+        if not code_bytes:
+             raise ValueError("protected_data returned empty content for 'zipfile'")
+        
+        # 2. Write to a temporary zip file
+        extraction_path = "/tmp/strategy_exec"
+        if os.name == 'nt':
+             extraction_path = ".\\tmp_strategy_exec"
+        
+        os.makedirs(extraction_path, exist_ok=True)
+        zip_path = os.path.join(extraction_path, "strategy.zip")
+        
+        with open(zip_path, "wb") as f:
+            f.write(code_bytes)
+            
+        # 3. Extract Zip
+        target_file = None
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extraction_path)
+            file_names = zip_ref.namelist()
+            # Look for strategy.py or any .py file
+            target_file = next((f for f in file_names if f.endswith('strategy.py')), None)
+            if not target_file:
+                 # Fallback to any python file if strategy.py not found
+                 target_file = next((f for f in file_names if f.endswith('.py') and not f.startswith('__')), None)
+        
+        if not target_file:
+            raise FileNotFoundError("No valid python strategy file found in protected zip")
+
+        # 4. Import the module
+        full_path = os.path.join(extraction_path, target_file)
+        spec = importlib.util.spec_from_file_location("strategy", full_path)
+        if not spec or not spec.loader:
+            raise ImportError(f"Could not create module spec for {target_file}")
+        
+        strategy_module = importlib.util.module_from_spec(spec)
+        sys.modules["strategy"] = strategy_module
+        spec.loader.exec_module(strategy_module)
+        
+        return strategy_module
+
+    except Exception as e:
+        traceback.print_exc()
+        raise RuntimeError(f"Failed to load strategy from protected zip: {e}")
 
 # =============================================================================
 # Main
 # =============================================================================
-def main() -> int:
-    """
-    Flow:
-      1) Read 'steps' (JSON array of rule strings) from protected data.
-      2) Parse each rule string into a normalized rule dict.
-      3) Fetch BTC hourly prices for the last 24h.
-      4) Evaluate rules to derive BUY/SELL allocations (fallback defaults if needed).
-      5) Write iExec-compliant outputs (result.json + computed.json).
-    """
-    t0 = time.time()
+def main():
     try:
-        # 1) Load seller-specified rule strings
-        rule_strings = load_steps_array()
+        # 1. Parse Arguments (passed via IEXEC_APP_ARGS or similar, but here 
+        #    we expect the 'shim' or the environment to pass them.
+        #    In standard iExec apps, args are in sys.argv[1:]
+        #    We expect JSON string as first arg for complex inputs like {wallet, amount}
+        #    OR separate flags. Let's support a JSON string in argv[1]
+        
+        user_args = {}
+        if len(sys.argv) > 1:
+            try:
+                # Attempt to join all arguments in case they were split by spaces
+                raw_arg = " ".join(sys.argv[1:])
+                # Cleaning quotes if needed (sometimes shell passing wrapper adds them)
+                if raw_arg.startswith("'") and raw_arg.endswith("'"):
+                    raw_arg = raw_arg[1:-1]
+                # Also handle double quotes wrapper if present
+                if raw_arg.startswith('"') and raw_arg.endswith('"'):
+                    raw_arg = raw_arg[1:-1]
+                
+                # Manual parsing (Robust to missing quotes)
+                content = raw_arg.strip()
+                if content.startswith("{") and content.endswith("}"):
+                    content = content[1:-1]
+                
+                items = content.split(',')
+                for item in items:
+                    if ':' in item:
+                        key, val = item.split(':', 1)
+                        k = key.strip()
+                        v = val.strip()
+                        
+                        # Remove formatting quotes if present (handles "key": "val" style)
+                        if (k.startswith('"') and k.endswith('"')) or (k.startswith("'") and k.endswith("'")):
+                            k = k[1:-1]
+                        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                            v = v[1:-1]
+                            
+                        user_args[k] = v
+                        
+            except Exception as e:
+                 print(f"Warning: Failed to parse arguments: {e}")
+                 # Fallback to defaults
+                 pass
+        
+        # 2. Extract specific known params
+        user_address = user_args.get("user_address") or user_args.get("wallet") or "0x0000000000000000000000000000000000000000"
+        amount = int(user_args.get("amount", 0))
+        
+        print(f"Running strategy for {user_address} with amount {amount}")
 
-        # 2) Parse to normalized rules
-        parsed_rules = [parse_rule(s) for s in rule_strings]
-
-        # 3) Market data
-        prices = fetch_btc_hourly_prices()
-
-        # 4) Decision now
-        decision = evaluate_rules_now(
-            prices=prices,
-            parsed_rules=parsed_rules,
-            max_position_percent=MAX_POSITION_PERCENT,
-        )
-
-        # 5) Emit outputs
-        result = {
-            "iapp": "strategy-executor-btc",
-            "version": 1,
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "market": "BTC-USD",
-            "data_source": "CoinGecko /market_chart?days=1&interval=hourly",
-            "lookback_hours": min(len(prices), 24),
-            "latest_price": prices[-1][1],
-            "recommendation": {
-                "action": decision["action"],   # BUY or SELL (highest weight)
-                "percent": decision["percent"],  # clamped by MAX_POSITION_PERCENT
-                "buy_percent": decision["buy_percent"],
-                "sell_percent": decision["sell_percent"],
-            },
-            "matched_rule": decision["matched_rules"],
-            "indicator_value_pct": decision["indicator_values"].get(
-                decision["action"].lower()
-            ),
-            "indicator_values_pct": decision["indicator_values"],
-            "explanations": decision["explanations"],
-            "audit": {
-                "rule_count": len(parsed_rules),
-                "max_position_percent": MAX_POSITION_PERCENT,
-                "accepted_formats": [
-                    "ACTION if pct_change Wh >= X% then P%",
-                    "ACTION if pct_change Wh <= X% then P%",
-                    "ACTION if pct_change Wh in [A%, B%] then P%",
-                ],
-            },
+        # 3. Load Strategy
+        strategy = load_strategy_module()
+        
+        # 4. Execute
+        if not hasattr(strategy, "generate_calldata"):
+            raise AttributeError("strategy.py must implement 'generate_calldata(user_address, amount)'")
+            
+        result = strategy.generate_calldata(user_address, amount)
+        
+        # 5. Format Output
+        output = {
+            "status": "success",
+            "action": result, # Expected { target_contract, calldata, value, chain_id, ... }
+            "message": result.get("description", "Strategy Executed Successfully")
         }
-
-        write_iexec_outputs(result)
-        return 0
-
+        
+        write_outputs(output)
+        
     except Exception as e:
-        # Always produce machine-readable error output for iExec UX.
-        err = {
-            "iapp": "strategy-executor-btc",
-            "version": 1,
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "error": f"{type(e).__name__}: {e}",
-        }
-        try:
-            write_iexec_outputs(err)
-        except Exception:
-            os.makedirs(IEXEC_OUT, exist_ok=True)
-            with open(os.path.join(IEXEC_OUT, "computed.json"), "w", encoding="utf-8") as f:
-                json.dump({"deterministic-output-path": IEXEC_OUT, "error": err["error"]}, f)
-        return 1
-    finally:
-        print(f"[iApp] Finished in {int(time.time() - t0)}s.")
-
+        traceback.print_exc()
+        write_error(str(e))
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
